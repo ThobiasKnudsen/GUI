@@ -1,35 +1,26 @@
 #ifndef GUI_H
 #define GUI_H
 
-typedef enum  {
-    NONE,
-    WINDOW,
-    NORMAL,
-    DRAWORDER,
-    TEXT,
-    RENDERTEXTURE,
-    CUSTOM
-} GUI_Item_Type;
-typedef unsigned int GUI_Item_ID;
-typedef struct GUI_Item_Window          GUI_Item_Window;
-typedef struct GUI_Item_Normal          GUI_Item_Normal;
-typedef struct GUI_Item_DrawOrder       GUI_Item_DrawOrder;
-typedef struct GUI_Item_Text            GUI_Item_Text;
-typedef struct GUI_Item_RenderTexture   GUI_Item_RenderTexture;
-typedef struct GUI_Item_Custom          GUI_Item_Custom;
-typedef union  GUI_Item_Union           GUI_Item_Union;
-typedef struct GUI_Item                 GUI_Item;
+#include <stdbool.h>
 
+typedef struct {
+    unsigned int    id;
+    unsigned short  loc;
+    unsigned char   type;
+    bool            active;
+} ID;
 
-void GUI_Create(unsigned int width, unsigned int height, const char* title, unsigned int FPS);
-void GUI_Show();
-void GUI_Close();
-void GUI_Delete();
+extern const ID NO_ID;
 
+ID      GUI_Sequence_Create();
+ID      GUI_Shape_Create(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned char r, unsigned char g, unsigned char b, unsigned char a, float rotation_360, unsigned int corner_radius_pixels, ID image_id);
+void    GUI_AddItemToSequence(ID sequence_id, ID id);
+ID      GUI_Render_Create(ID target_id, ID sequence_id);
+void    GUI_Render_AddFunction(ID render_id, ID function_id);
 
-GUI_Item_ID GUI_Get_WindowDrawOrder();
-GUI_Item_ID GUI_Item_Create();
-
-
+ID      GUI_Window_Create(unsigned int width, unsigned int height, const char* title, unsigned int FPS);
+void    GUI_Window_Show();
+void    GUI_Window_Close();
+void    GUI_Window_Delete();
 
 #endif // GUI_H

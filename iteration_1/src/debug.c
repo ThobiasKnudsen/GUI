@@ -76,7 +76,6 @@ void CrashFunction(int sig, siginfo_t *info, void *context) {
 }
 __attribute__((constructor))
 void DebugDataInit() {
-	printf("DebugDataInit\n\n");
     debug_data.all_allocs = malloc(256*sizeof(alloc_tracking_t));
 	if (debug_data.all_allocs == NULL) {
 		printf("ERROR | debug_data.all_allocs = malloc(2048*sizeof(debug_data_t));\n");
@@ -159,7 +158,6 @@ void* DebugMalloc (size_t size, size_t line, const char* file) {
 void* DebugRealloc(void* ptr, size_t size, size_t line, char* file) {
 
     for (size_t i = 0; i < debug_data.all_allocs_count; i++) {
-        printf("%ld\n", i);
         if (debug_data.all_allocs[i].ptr == ptr) {
             void* tmp = realloc(ptr, size);
             if (!tmp) {

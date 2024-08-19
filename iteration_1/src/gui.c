@@ -6,214 +6,942 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <math.h> // pow(a,b)
 
 #define DEBUG
 #include "debug.h"
 #include "array.h"
 
+// GOAL
+// MAKE A SIMPLE VERSION THAT USES VBO, VAO, EBO, FBO, INDICES IN EACH SEQENCE, VERTICES IN EACH SHAPE AND WITHOUT IMAGES TO MAKE THINGS SIMPLER
 
 
 // TYPES
-{
-    // VERTEX
+#define VERTEX 0
+#define SHAPE 1
+#define SEQUENCE 2
+#define RENDER 3
+#define ATLAS_IMAGE 4
+#define DYNAMIC_IMAGE 5
+#define STATIC_IMAGE 6
+#define IMAGE 7
+#define FUNCTION 8
+#define WINDOW 9
+#define NONE 10
+
+
+
+// STRUCTURES
     typedef struct {
+
         int             rect[4];
         float           tex_rect[4];
         unsigned int    color;
         float           rotation_360;
-        unsigned int    multiple_values; //corner_radius and tex_index
+        unsigned int    multiple_values; // 2 bytes corner_radius and 1 byte texture_loc
         bool            in_use;
-        bool            VBO_upToDate;
-        unsigned char   padding[2];
-    } Vertex; // 48 bytes (3 bytes padding)
+        bool            synced_with_VBO;
 
-    // TEXTURE ATLAS
+        // 46 bytes
+
+    } Vertex;
     typedef struct {
-        GLuint          texture_atlas;
+
+        ID              id;
+        unsigned int    vertex_loc;
+        unsigned int    image_loc; // its in the global image_array. if image_loc == 0 then it uses no image
+
+    } Shape; // 16 bytes
+    typedef struct {
+
+        ID              id;
+
+        ID*             id_array; // types are only SEQUENCE and SHAPE
+        unsigned int    id_array_size;
+        unsigned int    id_array_capacity;
+
+        unsigned int*   indices;
+        unsigned int    indices_size;
+        unsigned int    indices_capacity;
+
+    } Sequence;
+    typedef struct {
+
+        ID              id;
+
+        bool            window_is_target;
+        ID              image_target_id;
+        ID              sequence_id;
+
+        unsigned int*   image_samples_array;
+        unsigned int    image_samples_array_size;
+        unsigned int    image_samples_array_capacity;
+
+        unsigned int*   functions_array;
+        unsigned int    functions_array_size;
+        unsigned int    functions_array_capacity;
+
+    } Render;
+    typedef struct {
+
+        ID              id;
+
+        GLuint          texture;
         unsigned int    width;
         unsigned int    height;
-        unsigned int    padding;
 
-        Array           rect_per_texture;
-        Array           id_per_texture;
+        unsigned int    padding_pixels;
 
-        size_t          texture_count;
-    } TextureAtlas;
+        unsigned int*   rect_each_image; // 4x unsigned int
+        unsigned int    rect_each_image_size;
+        unsigned int    rect_each_image_capacity;
 
-    // GUI_STATICIMAGE
-    typedef struct {
-        unsigned int texture_atlas_index;
-        unsigned int texture_id;
-    } GUI_StaticImage;
+        unsigned int    image_count;
 
-    // GUI_DYNAMICIMAGE
-    typedef struct {
-        GLuint texture;
-        unsigned int width;
-        unsigned int height;
-
-    } GUI_DynamicImage;
-
-    // GUI_SHAPE 28 bytes
-    typedef struct {
-        unsigned int    rect[4];
-        unsigned char   color[4];
-        float           rotation_360;
-        unsigned int    corner_radius_pixels;
-    } GUI_Shape;
-
-    // GUI_SEQUENCE
+    } AtlasImage;
     typedef struct {
 
-    } GUI_Sequence;
-}
+        ID              id;
+        GLuint          texture;
+        unsigned int    width;
+        unsigned int    height;
+
+    } DynamicImage;
+    typedef struct {
+        ID                  id;
+        unsigned int        atlas_loc;
+        unsigned int        image_loc;
+    } StaticImage;
+    typedef struct {
+        ID          id;
+    } Function;
 
 
-static GLFWwindow* 	window = NULL;
-static GLuint       FBO = 0;
 
-static GUI_Item* 	item_array = NULL;
-static size_t		item_array_size = 0;
-static size_t		item_array_capacity = 0;
-static size_t 		ID_count = 0;
-#define ITEM_ARRAY_CAPACITY_START 8
+// DATA
+    static GLFWwindow*      window = NULL;
+    static GLuint           shader_program;
+    static GLuint           target_x_loc;
+    static GLuint           target_y_loc;
+    static GLuint           target_width_loc;
+    static GLuint           target_height_loc;
+    static GLuint           VAO;
+    static GLuint           VBO;
+    static unsigned int     VBO_size = 0;
+    static unsigned int     VBO_capacity = 0;
+    static GLuint           EBO;
+    static unsigned int     EBO_size = 0;
+    static unsigned int     EBO_capacity = 0;
+    static GLuint           FBO;
 
-static Vertex*		vertices = NULL;
-static size_t 		vertices_size = 0;
-static size_t 		vertices_capacity = 0;
-static size_t 		vertices_prev_size = 0;
-static size_t 		vertices_prev_capacity = 0;
-static bool 		any_vertex_update = false;
-#define VERTICES_CAPACITY_START 8
+    static ID*              id_array = NULL;
+    static unsigned int     id_array_size = 0;
+    static unsigned int     id_array_capacity = 0;
+    static unsigned int     id_count = 0;
+    const ID                NO_ID = {NONE, 0, 0, false};
 
-static Text* 		text_array = NULL;
-static size_t		text_array_size = 0;
-static size_t		text_array_capacity = 0;
-#define TEXT_ARRAY_CAPACITY_START 4
+    static Vertex*          vertices = NULL;
+    static unsigned int     vertices_size = 0;
+    static unsigned int     vertices_capacity = 0;
 
-// the items in this array can be either WINDOW, RENDERTEXTURE or DRAWORDER. it is like a tree. the first index, aka WINDOW, is the root then it branckes upwards as there are multiple draw_orders and targets for each target. Its important that a branch dont loops back into itself.
-static GUI_Item_ID* draw_tree_array = NULL;
-static size_t		draw_tree_array_size = 0;
-static size_t		draw_tree_array_capacity = 0;
-static bool			draw_tree_array_change = true;
-#define DRAW_TREE_ARRAY_CAPACITY_START 16
+    static Shape*           shape_array = NULL;
+    static unsigned int     shape_array_size = 0;
+    static unsigned int     shape_array_capacity = 0;
 
-// GPU ================================================================================================================================================
-static GLuint 		shader_program;
-static GLuint			VBO;
-static GLuint			VAO;
+    static Sequence*        sequence_array = NULL;
+    static unsigned int     sequence_array_size = 0;
+    static unsigned int     sequence_array_capacity = 0;
 
-static GLuint 		target_x_loc;
-static GLuint 		target_y_loc;
-static GLuint 		target_width_loc;
-static GLuint 		target_height_loc;
+    static Render*          render_array = NULL;
+    static unsigned int     render_array_size = 0;
+    static unsigned int     render_array_capacity = 0;
 
-void GUI_RenderToTexture(GUI_Texture_Id texture_id, GUI_Sequence_Id) {
+    static AtlasImage*      atlas_image_array = NULL;
+    static unsigned int     atlas_image_array_size = 0;
+    static unsigned int     atlas_image_array_capacity = 0;
 
-    // Update VAO
-    {
-        glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    static DynamicImage*    dynamic_image_array = NULL;
+    static unsigned int     dynamic_image_array_size = 0;
+    static unsigned int     dynamic_image_array_capacity = 0;
 
-        // pos attribute
-        glEnableVertexAttribArray(0);
-        glVertexAttribIPointer(0, 1, GL_INT, sizeof(Vertex), (void*)(0*sizeof(int)));
-        glEnableVertexAttribArray(1);
-        glVertexAttribIPointer(1, 1, GL_INT, sizeof(Vertex), (void*)(1*sizeof(int)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribIPointer(2, 1, GL_INT, sizeof(Vertex), (void*)(2*sizeof(int)));
-        glEnableVertexAttribArray(3);
-        glVertexAttribIPointer(3, 1, GL_INT, sizeof(Vertex), (void*)(3*sizeof(int)));
-        // tex_rect attribute
-        glEnableVertexAttribArray(4);
-        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(4*sizeof(float)));
-        // color attribute
-        glEnableVertexAttribArray(5);
-        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(Vertex), (void*)(8*sizeof(float)));
-        // rotation_360 attribute
-        glEnableVertexAttribArray(6);
-        glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(9*sizeof(float)));
-        // corner_radius and tex_index attribute
-        glEnableVertexAttribArray(7);
-        glVertexAttribIPointer(7, 1, GL_UNSIGNED_INT,  sizeof(Vertex), (void*)(10*sizeof(float)));
+    static StaticImage*     static_image_array = NULL;
+    static unsigned int     static_image_array_size = 0;
+    static unsigned int     static_image_array_capacity = 0;
 
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
+    static ID*              image_array = NULL;
+    static unsigned int     image_array_size = 0;
+    static unsigned int     image_array_capacity = 0;
+
+    static Function*        function_array = NULL;
+    static unsigned int     function_array_size = 0;
+    static unsigned int     function_array_capacity = 0;
+
+// OPENGL ERROR HANDLING
+void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam) {
+    // Print message source
+    const char* sourceStr;
+    switch (source) {
+        case GL_DEBUG_SOURCE_API:             sourceStr = "API"; break;
+        case GL_DEBUG_SOURCE_WINDOW_SYSTEM:   sourceStr = "Window System"; break;
+        case GL_DEBUG_SOURCE_SHADER_COMPILER: sourceStr = "Shader Compiler"; break;
+        case GL_DEBUG_SOURCE_THIRD_PARTY:     sourceStr = "Third Party"; break;
+        case GL_DEBUG_SOURCE_APPLICATION:     sourceStr = "Application"; break;
+        case GL_DEBUG_SOURCE_OTHER:           sourceStr = "Other"; break;
+        default:                              sourceStr = "Unknown"; break;
     }
+
+    // Print message type
+    const char* typeStr;
+    switch (type) {
+        case GL_DEBUG_TYPE_ERROR:               typeStr = "Error"; break;
+        case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: typeStr = "Deprecated Behavior"; break;
+        case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:  typeStr = "Undefined Behavior"; break;
+        case GL_DEBUG_TYPE_PORTABILITY:         typeStr = "Portability"; break;
+        case GL_DEBUG_TYPE_PERFORMANCE:         typeStr = "Performance"; break;
+        case GL_DEBUG_TYPE_MARKER:              typeStr = "Marker"; break;
+        case GL_DEBUG_TYPE_PUSH_GROUP:          typeStr = "Push Group"; break;
+        case GL_DEBUG_TYPE_POP_GROUP:           typeStr = "Pop Group"; break;
+        case GL_DEBUG_TYPE_OTHER:               typeStr = "Other"; break;
+        default:                                typeStr = "Unknown"; break;
+    }
+
+    // Print message severity
+    const char* severityStr;
+    switch (severity) {
+        case GL_DEBUG_SEVERITY_HIGH:         severityStr = "High"; break;
+        case GL_DEBUG_SEVERITY_MEDIUM:       severityStr = "Medium"; break;
+        case GL_DEBUG_SEVERITY_LOW:          severityStr = "Low"; break;
+        case GL_DEBUG_SEVERITY_NOTIFICATION: severityStr = "Notification"; break;
+        default:                             severityStr = "Unknown"; break;
+    }
+
+    // Print the complete debug message
+    printf("OpenGL Debug Message\n");
+    printf("Source: %s\n", sourceStr);
+    printf("Type: %s\n", typeStr);
+    printf("ID: %u\n", id);
+    printf("Severity: %s\n", severityStr);
+    printf("Message: %s\n", message);
+    printf("\n");
+
+    exit(-1);
 }
 
-void GUI_Initialize(unsigned int width, unsigned int height, const char* title) {
-    window = GUI_CreateWindow(width, height, title);
 
-	// setting up window_item
-	debug(GUI_Item_ID window_item = GUI_Item_Create_Private(WINDOW, 0));
-	debug(GUI_Item_Window* window_ptr = &GUI_GetItemPtr(window_item)->item.window);
-	window_ptr->width  = width;
-	window_ptr->height = height;
+// FUNCTIONS
+    void* GetItemPointer(ID id) {
 
-	// setting up first draw_order_item
-	debug(GUI_Item_ID window_draw_order_item = GUI_Item_DrawOrder_Create());
-	window_ptr->draw_order_id = window_draw_order_item;
+        void* ptr = NULL;
 
-
-	// testing items creation and setup
-	debug(GUI_Item_Normal_Create(10,10,200,100,200,64,0,255,GUI_Get_WindowDrawOrder()));
-
-
-
-
-	GLuint shaders[3];
-    printf("vertex: \n"); debug(shaders[0] = GUI_CompileShader(GUI_ReadShaderSource("shaders/uber_vertex_shader.glsl"), GL_VERTEX_SHADER));
-	printf("geometry: \n"); debug(shaders[1] = GUI_CompileShader(GUI_ReadShaderSource("shaders/uber_geometry_shader.glsl"), GL_GEOMETRY_SHADER));
-    printf("fragment: \n"); debug(shaders[2] = GUI_CompileShader(GUI_ReadShaderSource("shaders/uber_fragment_shader.glsl"), GL_FRAGMENT_SHADER));
-	shader_program = GUI_CreateProgram(shaders, 3);
-	glDeleteShader(shaders[0]);
-	glDeleteShader(shaders[1]);
- 	glDeleteShader(shaders[2]);
-
-	// Generate and bind a Vertex Array Object
-	glGenVertexArrays(1, &VAO);
-	glGenBuffers(1, &VBO);
-
-	target_width_loc = glGetUniformLocation(shader_program, "target_width");
-	target_height_loc = glGetUniformLocation(shader_program, "target_height");
-
-	GUI_PrintAllInfo();
-}
-
-void GUI_RenderLoop {
-    while (!glfwWindowShouldClose(window)) {
-
-		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-			glfwSetWindowShouldClose(window, true);
-		}
-		debug(GUI_PrintFPS(window));
-
-
-        // PrepareForRendering
-        {
-             FindDrawTree
-            ValidateDrawTree_And_SetIndicesInSequences
-            SetEBOinSequences                           | ValidateDrawTree_And_SetIndicesInSequences
-            ResetIndicesNeedsUpdateInSequences          | SetEBOinSequences
-            UpdateVerticesInSeqeunces                   | ValidateDrawTree_And_SetIndicesInSequences
-            Update                                      | UpdateVerticesInSeqeunces
+        switch(id.type) {
+            case VERTEX:
+                ptr = &vertices[id.loc];
+                break;
+            case SHAPE:
+                ptr = &shape_array[id.loc];
+                #ifdef DEBUG
+                if (((Shape*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((Shape*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Shape*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
+            case SEQUENCE:
+                ptr = &sequence_array[id.loc];
+                #ifdef DEBUG
+                if (sequence_array == NULL) {
+                    printf("design flaw: sequence_array == NULL\n");
+                    exit(-1);
+                }
+                if (((Sequence*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((Sequence*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Sequence*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
+            case RENDER:
+                ptr = &render_array[id.loc];
+                #ifdef DEBUG
+                if (render_array == NULL) {
+                    printf("design flaw: render_array == NULL\n");
+                    exit(-1);
+                }
+                if (((Render*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((Render*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Render*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
+            case ATLAS_IMAGE:
+                ptr = &atlas_image_array[id.loc];
+                #ifdef DEBUG
+                if (((AtlasImage*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((AtlasImage*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((AtlasImage*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
+            case DYNAMIC_IMAGE:
+                ptr = &dynamic_image_array[id.loc];
+                #ifdef DEBUG
+                if (((DynamicImage*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((DynamicImage*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((DynamicImage*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
+            case STATIC_IMAGE:
+                ptr = &static_image_array[id.loc];
+                #ifdef DEBUG
+                if (((StaticImage*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((StaticImage*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((StaticImage*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
+            case IMAGE:
+                ptr = &image_array[id.loc];
+                break;
+            case FUNCTION:
+                ptr = &function_array[id.loc];
+                #ifdef DEBUG
+                if (((Function*)ptr)->id.id != id.id) {
+                    printf("design flaw: id.loc(%d) ((Function*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Function*)ptr)->id.id, id.id);
+                    exit(-1);
+                }
+                #endif
+                break;
         }
-        // Rendering
-        {
 
-        }
-        // UserEvents
-        {
-
-        }
-        // ReactionToUserEvents
-        {
-
+        if (ptr == NULL) {
+            printf("design flaw: ptr == NULL\n");
+            exit(-1);
         }
 
+        return ptr;
+    }
+    // PRINTING
+        void GUI_PrintFPS() {
+            static double previous_seconds = 0.0f;
+            static int frame_count = 0;
+            double current_seconds = glfwGetTime();
+            double elapsed_seconds = current_seconds - previous_seconds;
 
-		glfwSwapBuffers(window);
-		glfwPollEvents();
-	}
-}
+            if (elapsed_seconds > 1.0) {
+                previous_seconds = current_seconds;
+                double fps = (double)frame_count / elapsed_seconds;
+                char tmp[128];
+                snprintf(tmp, sizeof(tmp), "FPS: %.2f", fps);
+                printf("%s\n", tmp);
+                frame_count = 0;
+            }
+            frame_count++;
+        }
+        /*
+        void GUI_Item_Print(GUI_Item* item_ptr) {
+            printf("id = %d | type = %d | vertex_location = %d | in_use = %d\n", item_ptr->id, item_ptr->type, item_ptr->vertex_location, item_ptr->in_use);
+        }
+        */
+        void PrintID(ID id) {
+            printf("id = {%d, %d, %d, %d}\n", id.id, id.loc, id.type, id.active);
+        }
+        void PrintSequence(ID id) {
+            printf("printing sequence\n");
+            PrintID(id);
+            Sequence* ptr = GetItemPointer(id);
+            printf("id_array (%d):\n", ptr->id_array_size);
+            for (unsigned int i = 0; i < ptr->id_array_size; i++) {
+                PrintID(ptr->id_array[i]);
+            }
+            printf("indices (%d):\n", ptr->indices_size);
+            for (unsigned int i = 0; i < ptr->indices_size; i++) {
+                printf("    %d\n", ptr->indices[i]);
+            }
+        }
+        void GUI_PrintAllInfo() {
+
+            printf("printing all info\n");
+            // VERTEX
+            printf("vertices (%d): \n", vertices_size);
+            for (unsigned int i = 0; i < vertices_size; i++) {
+                printf("    rect = (%d,%d,%d,%d) | color = (%d,%d,%d,%d) | in_use = %d\n", vertices[i].rect[0], vertices[i].rect[1], vertices[i].rect[2], vertices[i].rect[3], ((unsigned char*)(&vertices[i].color))[0], ((unsigned char*)(&vertices[i].color))[1], ((unsigned char*)(&vertices[i].color))[2], ((unsigned char*)(&vertices[i].color))[3], vertices[i].in_use);
+            }
+
+            // SHAPE
+            printf("shape_array (%d): \n", shape_array_size);
+            for (unsigned int i = 0; i < shape_array_size; i++) {
+                PrintID(shape_array[i].id);
+                printf("    vertex_loc = %d | image_loc = %d\n", shape_array[i].vertex_loc, shape_array[i].image_loc);
+            }
+
+            printf("DONE printing all infor ============\n");
+        }
+        /*
+        void GUI_PrintAllInfo() {
+
+            printf("Items(%zu):\n", item_array_capacity);
+            for (unsigned int i = 0; i < item_array_capacity; i++) {
+                bool in_use = item_array[i].in_use;
+
+                if (item_array[i].type == WINDOW) {
+                    printf("id = %d | type = WINDOW | draw_order_id = %d | changed = %d | in_use = %d\n", in_use*item_array[i].id, in_use*item_array[i].item.window.draw_order_id, in_use*item_array[i].changed, in_use);
+                }
+                else if (item_array[i].type == NORMAL) {
+                    printf("id = %d | type = NORMAL | vertex_location = %d | changed = %d | in_use = %d\n", in_use*item_array[i].id, in_use*item_array[i].vertex_location, in_use*item_array[i].changed, in_use);
+                }
+                else if (item_array[i].type == RENDERTEXTURE) {
+
+                }
+                else if (item_array[i].type == DRAWORDER) {
+                    printf("id = %d | type = DRAWORDER | draw_order_items_size = %d | changed = %d | in_use = %d\n", in_use*item_array[i].id, in_use*item_array[i].item.draw_order.item_id_array_size, in_use*item_array[i].changed, in_use);
+                    for (unsigned int j = 0; j < item_array[i].item.draw_order.item_id_array_size; j++) {
+                        GUI_Item* item_ptr = GUI_GetItemPtr(item_array[i].item.draw_order.item_id_array[j]);
+                        printf("	id = %d | type = %d | changed = %d | in_use = %d\n", in_use*item_ptr->id, in_use*item_ptr->type, in_use*item_ptr->changed, in_use);
+                    }
+                }
+                else if (item_array[i].type == NONE) {
+                    printf("id = %d | type = NONE | vertex_location = %d | changed = %d | in_use = %d\n", in_use*item_array[i].id, in_use*item_array[i].changed, in_use);
+                }
+                else if (item_array[i].type == CUSTOM) {
+
+                }
+                else {
+                    printf("THERE IS AN FLAW IN THE DESIGNE OF GUI. AN ITEM HAS AN UNKNOWN TYPE\n");
+                }
+            }
+            printf("Vertices(%zu): \n", vertices_capacity);
+            for (unsigned int i = 0; i < vertices_capacity; i++) {
+                bool in_use = vertices[i].in_use;
+                printf("rect = (%d,%d,%d,%d) | color = (%d,%d,%d,%d) | in_use = %d\n", in_use*vertices[i].rect[0], in_use*vertices[i].rect[1], in_use*vertices[i].rect[2], in_use*vertices[i].rect[3],
+                    in_use*((unsigned char*)(&vertices[i].color))[0], in_use*((unsigned char*)(&vertices[i].color))[1], in_use*((unsigned char*)(&vertices[i].color))[2], in_use*((unsigned char*)(&vertices[i].color))[3],
+                    vertices[i].in_use);
+            }
+            printf("Text(%zu): \n", text_array_capacity);
+            for (unsigned int i = 0; i < text_array_capacity; i++) {
+                bool in_use = text_array[i].in_use;
+                printf("text_length = %zu | text_capacity = %zu | in_use = %d \n", in_use*text_array[i].symbol_array_length, in_use*text_array[i].symbol_array_capacity, text_array[i].in_use);
+            }
+        }
+        */
+
+        void GUI_PrintMaxTextureSize() {
+            GLint maxTextureSize;
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+            printf("Maximum supported texture size: %d\n", maxTextureSize);
+        }
+    // GLFW SIMPLIFIED
+        GLFWwindow* CreateWindow(unsigned int width, unsigned int height, const char* title) {
+            // Initialize GLFW
+            if (!glfwInit()) {
+                printf("Failed to initialize GLFW\n");
+                exit(-1);
+            }
+
+
+            // Set GLFW window hints
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+            glfwWindowHint(GLFW_SAMPLES, 4);
+            glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+            glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+
+            // Create a GLFW window
+            GLFWwindow* window = glfwCreateWindow(width, height, title, NULL, NULL);
+            if (!window) {
+                printf("Failed to create GLFW window\n");
+                glfwTerminate();
+                exit(-1);
+            }
+
+            // Make the OpenGL context current
+            glfwMakeContextCurrent(window);
+
+            // Initialize GLEW
+            if (glewInit() != GLEW_OK) {
+                printf("Failed to initialize GLEW\n");
+                exit(-1);
+            }
+
+            //glfwSwapInterval(0);
+
+            glEnable(GL_DEBUG_OUTPUT);
+            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+            glDebugMessageCallback(OpenGLDebugCallback, NULL);
+
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            return window;
+        }
+        GLuint CompileShader(const char* shader_source, GLenum shader_type) {
+            // Compile the shader
+            debug(GLuint shader = glCreateShader(shader_type));
+            debug(glShaderSource(shader, 1, &shader_source, NULL));
+            debug(glCompileShader(shader));
+            // Check for shader compile errors
+            int success;
+            char infoLog[512];
+            debug(glGetShaderiv(shader, GL_COMPILE_STATUS, &success));
+            if (!success) {
+                glGetShaderInfoLog(shader, 512, NULL, infoLog);
+                printf("ERROR: shader %d compilation failed: %s\n", shader_type, infoLog);
+            }
+            return shader;
+        }
+        GLuint CreateProgram(GLuint* shaders, size_t number_of_shaders) {
+            // Link shaders to create a shader program
+            GLuint shader_program = glCreateProgram();
+            for (size_t i = 0; i < number_of_shaders; i++) {
+                glAttachShader(shader_program, shaders[i]);
+            }
+            glLinkProgram(shader_program);
+            // Check for linking errors
+            int success;
+            char infoLog[512];
+            glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
+            if (!success) {
+                glGetProgramInfoLog(shader_program, 512, NULL, infoLog);
+                printf("ERROR: shader program linking failed: %s\n", infoLog);
+            }
+            return shader_program;
+        }
+        int NDCtoPixel(float NDC, unsigned int max_pixels) {
+            return (int)((float)max_pixels*((NDC+1.f)/2.f));
+        }
+        float PixeltoNDC(float pixel, unsigned int max_pixels) {
+            return (2.f*(float)pixel/(float)max_pixels)-1.f;
+        }
+        char* ReadShaderSource(const char* shader_file) {
+            debug(FILE* file = fopen(shader_file, "rb"););
+            if (!file) {
+                printf("ERROR: could not open shader file %s\n", shader_file);
+                exit(-1);
+            }
+
+            fseek(file,0,SEEK_END);
+            long length = ftell(file);
+            fseek(file,0,SEEK_SET);
+
+            debug(char* buffer = alloc(NULL, length+1));
+            if(!buffer){
+                printf("ERROR: could not allocatre memory for reading file %s\n", shader_file);
+                fclose(file);
+                exit(-1);
+            }
+
+            debug(fread(buffer,1,length,file););
+            debug(buffer[length]='\0';);
+            debug(fclose(file););
+
+            if (!buffer) {
+                printf("ERROR: buffer is NULL\n");
+                exit(-1);
+            }
+
+            return buffer;
+        }
+
+    // PRIVATE
+        ID ID_Create(unsigned char type) {
+            ID new_id;
+            new_id.id = id_count;
+            id_count++;
+            new_id.type = type;
+            new_id.active = true;
+            switch (type) {
+                case VERTEX:
+                    debug(vertices = Array_ManageMemory(vertices, &vertices_size, &vertices_capacity, sizeof(Vertex)));
+                    new_id.loc = vertices_size;
+                    vertices_size++;
+                    break;
+                case SHAPE:
+                    debug(shape_array = Array_ManageMemory(shape_array, &shape_array_size, &shape_array_capacity, sizeof(Shape)));
+                    new_id.loc = shape_array_size;
+                    shape_array[new_id.loc].id = new_id;
+                    shape_array_size++;
+                    break;
+                case SEQUENCE:
+                    debug(sequence_array = Array_ManageMemory(sequence_array, &sequence_array_size, &sequence_array_capacity, sizeof(Sequence)));
+                    new_id.loc = sequence_array_size;
+                    sequence_array[new_id.loc].id = new_id;
+                    sequence_array_size++;
+                    break;
+                case RENDER:
+                    debug(render_array = Array_ManageMemory(render_array, &render_array_size, &render_array_capacity, sizeof(Render)));
+                    new_id.loc = render_array_size;
+                    render_array[new_id.loc].id = new_id;
+                    render_array_size++;
+                    break;
+                case ATLAS_IMAGE:
+                    debug(atlas_image_array = Array_ManageMemory(atlas_image_array, &atlas_image_array_size, &atlas_image_array_capacity, sizeof(AtlasImage)));
+                    new_id.loc = atlas_image_array_size;
+                    atlas_image_array[new_id.loc].id = new_id;
+                    atlas_image_array_size++;
+                    break;
+                case DYNAMIC_IMAGE:
+                    debug(dynamic_image_array = Array_ManageMemory(dynamic_image_array, &dynamic_image_array_size, &dynamic_image_array_capacity, sizeof(DynamicImage)));
+                    new_id.loc = dynamic_image_array_size;
+                    dynamic_image_array[new_id.loc].id = new_id;
+                    dynamic_image_array_size++;
+                    break;
+                case STATIC_IMAGE:
+                    debug(static_image_array = Array_ManageMemory(static_image_array, &static_image_array_size, &static_image_array_capacity, sizeof(StaticImage)));
+                    new_id.loc = static_image_array_size;
+                    static_image_array[new_id.loc].id = new_id;
+                    static_image_array_size++;
+                    break;
+                case IMAGE:
+                    debug(image_array = Array_ManageMemory(image_array, &image_array_size, &image_array_capacity, sizeof(ID)));
+                    new_id.loc = image_array_size;
+                    image_array_size++;
+                    break;
+                case FUNCTION:
+                    debug(function_array = Array_ManageMemory(function_array, &function_array_size, &function_array_capacity, sizeof(Function)));
+                    new_id.loc = function_array_size;
+                    function_array[new_id.loc].id = new_id;
+                    function_array_size++;
+                    break;
+            }
+            #ifdef DEBUG
+            debug(id_array = Array_ManageMemory(id_array, &id_array_size, &id_array_capacity, sizeof(ID)));
+            debug(id_array[id_array_size] = new_id);
+            id_array_size++;
+            #endif
+            return new_id;
+        }
+
+        ID Vertex_Create(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned char r, unsigned char g, unsigned char b, unsigned char a, float rotation_360, unsigned int corner_radius_pixels) {
+
+            ID new_vertex_id = ID_Create(VERTEX);
+            Vertex* vertex_ptr = GetItemPointer(new_vertex_id);
+
+            vertex_ptr->rect[0] = x;
+            vertex_ptr->rect[1] = y;
+            vertex_ptr->rect[2] = width;
+            vertex_ptr->rect[3] = height;
+            vertex_ptr->tex_rect[0] = 0.0f;
+            vertex_ptr->tex_rect[1] = 0.0f;
+            vertex_ptr->tex_rect[2] = 1.0f;
+            vertex_ptr->tex_rect[3] = 1.0f;
+            vertex_ptr->color = (unsigned int)pow(2, 24)*((unsigned int)r) +
+                                (unsigned int)pow(2, 16)*((unsigned int)g) +
+                                (unsigned int)pow(2, 8)*((unsigned int)b) +
+                                (unsigned int)pow(2, 0)*((unsigned int)a);
+            vertex_ptr->rotation_360 = rotation_360;
+            vertex_ptr->multiple_values = (vertex_ptr->multiple_values&0x0000FFFF) + (unsigned int)pow(2,16) * corner_radius_pixels;
+            vertex_ptr->in_use = true;
+            vertex_ptr->synced_with_VBO = false;
+
+            return new_vertex_id;
+
+        }
+
+    // PUBLIC
+        ID GUI_Sequence_Create() {
+
+            debug(ID new_sequence_id = ID_Create(SEQUENCE));
+            debug(Sequence* sequence_ptr = GetItemPointer(new_sequence_id));
+
+            sequence_ptr->id_array = NULL;
+            sequence_ptr->id_array_size = 0;
+            sequence_ptr->id_array_capacity = 0;
+            sequence_ptr->indices = NULL;
+            sequence_ptr->indices_size = 0;
+            sequence_ptr->indices_capacity = 0;
+
+            return new_sequence_id;
+        }
+        ID GUI_Shape_Create(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned char r, unsigned char g, unsigned char b, unsigned char a, float rotation_360, unsigned int corner_radius_pixels, ID image_id) {
+
+            ID new_vertex_id = Vertex_Create(x,y,width,height,r,g,b,a,rotation_360,corner_radius_pixels);
+
+            ID new_shape_id = ID_Create(SHAPE);
+            Shape* shape_ptr = GetItemPointer(new_shape_id);
+            shape_ptr->image_loc = image_id.loc;
+            shape_ptr->vertex_loc = new_vertex_id.loc;
+            PrintID(new_shape_id);
+            printf("%d %d %d\n", shape_ptr->image_loc, shape_ptr->vertex_loc, shape_ptr->id.id);
+
+            return new_shape_id;
+        }
+        void GUI_AddItemToSequence(ID sequence_id, ID id) {
+
+            if (id.type != SHAPE && id.type != SEQUENCE) {
+                printf("user flaw: item to add to sequence is not of type sequence or shape\n");
+                exit(-1);
+            }
+            if (sequence_id.type != SEQUENCE) {
+                printf("user flaw: given ID for sequence GUI_AddItemToSequence is not of type SEQUENCE\n");
+                exit(-1);
+            }
+
+            Sequence* sequence_ptr = GetItemPointer(sequence_id);
+
+            debug(sequence_ptr->id_array = Array_ManageMemory(sequence_ptr->id_array, &sequence_ptr->id_array_size, &sequence_ptr->id_array_capacity, sizeof(ID)));
+            sequence_ptr->id_array[sequence_ptr->id_array_size] = id;
+            sequence_ptr->id_array_size++;
+
+            PrintSequence(sequence_id);
+            PrintID(id);
+
+        }
+        ID GUI_Render_Create(ID target_id, ID sequence_id) {
+
+            if (target_id.type != WINDOW && target_id.type != DYNAMIC_IMAGE && target_id.type != STATIC_IMAGE) {
+                printf("user flaw: You provided a target that is neither a WINDOW, DYNAMIC_IMAGE or STATIC_IMAGE\n");
+                exit(-1);
+            }
+
+            debug(Render* render_ptr = GetItemPointer(ID_Create(RENDER)));
+
+            // if target is WINDOW
+            if (target_id.type == WINDOW) {
+                render_ptr->sequence_id = sequence_id;
+                render_ptr->window_is_target = true;
+            }
+            // if target is DYNAMIC_IMAGE or STATIC_IMAGE
+            else {
+                render_ptr->sequence_id = sequence_id;
+                render_ptr->window_is_target = false;
+                render_ptr->image_target_id = target_id;
+            }
+
+            return render_ptr->id;
+        }
+        ID GUI_Window_Create(unsigned int width, unsigned int height, const char* title, unsigned int FPS) {
+
+            //glGetIntegerv(GL_MAX_IMAGE_SIZE, &maxTextureSize);
+
+            // shader program
+            window = CreateWindow(width, height, title);
+            GLuint shaders[3];
+            debug(shaders[0] = CompileShader(ReadShaderSource("shaders/uber_vertex_shader.glsl"), GL_VERTEX_SHADER));
+            debug(shaders[1] = CompileShader(ReadShaderSource("shaders/uber_geometry_shader.glsl"), GL_GEOMETRY_SHADER));
+            debug(shaders[2] = CompileShader(ReadShaderSource("shaders/uber_fragment_shader.glsl"), GL_FRAGMENT_SHADER));
+            shader_program = CreateProgram(shaders, 3);
+            glDeleteShader(shaders[0]);
+            glDeleteShader(shaders[1]);
+            glDeleteShader(shaders[2]);
+
+            // Generate and bind a Vertex Array Object
+            glGenVertexArrays(1, &VAO);
+            glGenBuffers(1, &VBO);
+            glGenBuffers(1, &EBO);
+
+            glBindVertexArray(VAO);
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+            // pos attribute
+            glEnableVertexAttribArray(0);
+            glVertexAttribIPointer(0, 1, GL_INT, sizeof(Vertex), (void*)(0*sizeof(int)));
+            glEnableVertexAttribArray(1);
+            glVertexAttribIPointer(1, 1, GL_INT, sizeof(Vertex), (void*)(1*sizeof(int)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribIPointer(2, 1, GL_INT, sizeof(Vertex), (void*)(2*sizeof(int)));
+            glEnableVertexAttribArray(3);
+            glVertexAttribIPointer(3, 1, GL_INT, sizeof(Vertex), (void*)(3*sizeof(int)));
+            // tex_rect attribute
+            glEnableVertexAttribArray(4);
+            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(4*sizeof(float)));
+            // color attribute
+            glEnableVertexAttribArray(5);
+            glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(Vertex), (void*)(8*sizeof(float)));
+            // rotation_360 attribute
+            glEnableVertexAttribArray(6);
+            glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(9*sizeof(float)));
+            // corner_radius and tex_loc attribute
+            glEnableVertexAttribArray(7);
+            glVertexAttribIPointer(7, 1, GL_UNSIGNED_INT,  sizeof(Vertex), (void*)(10*sizeof(float)));
+
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+
+            target_width_loc = glGetUniformLocation(shader_program, "target_width");
+            target_height_loc = glGetUniformLocation(shader_program, "target_height");
+
+
+            //PrintAllInfo();
+
+            ID id;
+            id.type = WINDOW;
+            return id;
+        }
+        void GUI_Window_Show() {
+
+            GUI_PrintAllInfo();
+
+            unsigned int*   sequence_loc_array = NULL;
+            unsigned int    sequence_loc_array_size = 0;
+            unsigned int    sequence_loc_array_capacity = 0;
+
+            while (!glfwWindowShouldClose(window)) {
+
+                if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+                    glfwSetWindowShouldClose(window, true);
+                }
+                debug(GUI_PrintFPS());
+
+                // render
+                {
+                    for (int i = render_array_size-1; i >= 0; i--) {
+
+                        //  skip it not active
+                        if (!render_array[i].id.active) {
+                            continue;
+                        }
+
+                        // everything needed for drawing onto target including any necessary data update.
+                        {
+                            // making a list of all used sequences then finding the indices for every sequence
+                            {
+                                #ifdef DEBUG
+                                if (render_array[i].sequence_id.type != SEQUENCE) {
+                                    printf("design flaw: there is no sequence inside render\n");
+                                    exit(-1);
+                                }
+                                #endif
+
+                                sequence_loc_array_size = 1;
+                                debug(sequence_loc_array = Array_ManageMemory(sequence_loc_array, &sequence_loc_array_size, &sequence_loc_array_capacity, sizeof(unsigned int)));
+                                sequence_loc_array[0] = render_array[i].sequence_id.loc;
+
+                                // finding all sequences used for this render
+                                for (unsigned int j = 0; j < sequence_loc_array_size; j++) {
+
+                                    Sequence* sequence_ptr = &(sequence_array[sequence_loc_array[j]]);
+
+                                    for (unsigned int k = 0; k < sequence_ptr->id_array_size; k++) {
+
+                                        ID id_in_sequence = sequence_ptr->id_array[k];
+
+                                        if (id_in_sequence.type == SHAPE) {
+                                            continue;
+                                        }
+                                        #ifdef DEBUG
+                                        else if (id_in_sequence.type != SEQUENCE) {
+                                            printf("design flaw: id inside sequence should be either SEQUENCE or SHAPE\n");
+                                            exit(-1);
+                                        }
+                                        #endif
+
+                                        // if type==SEQUENCE then append location
+                                        debug(sequence_loc_array = Array_ManageMemory(sequence_loc_array, &sequence_loc_array_size, &sequence_loc_array_capacity, sizeof(unsigned int)));
+                                        sequence_loc_array[sequence_loc_array_size] = id_in_sequence.loc;
+                                        sequence_loc_array_size++;
+                                    }
+                                }
+
+                                // updating indices in all sequences just found. starting from the last found sequence
+                                for (int j = sequence_loc_array_size-1; j>=0; j--) {
+                                    Sequence* sequence_ptr = &(sequence_array[sequence_loc_array[j]]);
+                                    sequence_ptr->indices_size = 0;
+                                    for (unsigned int k = 0; k < sequence_ptr->id_array_size; k++) {
+
+                                        ID id_in_sequence = sequence_ptr->id_array[k];
+
+                                        // if SHAPE then only appending the index in that shape
+                                        if (id_in_sequence.type == SHAPE) {
+                                            Shape* shape_ptr = GetItemPointer(id_in_sequence);
+                                            debug(sequence_ptr->indices = Array_ManageMemory(sequence_ptr->indices, &sequence_ptr->indices_size, &sequence_ptr->indices_capacity, sizeof(unsigned int)));
+                                            sequence_ptr->indices[sequence_ptr->indices_size] = shape_ptr->vertex_loc;
+                                            sequence_ptr->indices_size++;
+                                        }
+
+                                        // if SEQUENCE then append all indices in that other sequence
+                                        else if (id_in_sequence.type == SEQUENCE) {
+                                            Sequence* other_sequence_ptr = GetItemPointer(id_in_sequence);
+                                            for (unsigned int l = 0; l < other_sequence_ptr->indices_size; l++) {
+                                                debug(sequence_ptr->indices = Array_ManageMemory(sequence_ptr->indices, &sequence_ptr->indices_size, &sequence_ptr->indices_capacity, sizeof(unsigned int))); // resizes only if needed
+                                                sequence_ptr->indices[sequence_ptr->indices_size] = other_sequence_ptr->indices[l];
+                                                sequence_ptr->indices_size++;
+                                            }
+                                        }
+                                    }
+                                }
+                                //free(sequence_loc_array);
+                            }
+
+
+                            // now indices in the sequence for this render is updated
+
+                            Sequence* sequence_ptr = GetItemPointer(render_array[i].sequence_id);
+                            // updating VBO
+                            {
+                                glBindBuffer(GL_ARRAY_BUFFER, VBO);
+                                if (vertices_capacity > VBO_capacity) {
+                                    glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex)*vertices_capacity, vertices, GL_DYNAMIC_DRAW);
+                                    VBO_capacity = vertices_capacity;
+                                    for (unsigned int j = 0; j < sequence_ptr->indices_size; j++) {
+                                        vertices[sequence_ptr->indices[j]].synced_with_VBO = true;
+                                    }
+                                }
+                                else {
+                                    for (unsigned int j = 0; j < sequence_ptr->indices_size; j++) {
+                                        if (vertices[sequence_ptr->indices[j]].synced_with_VBO) {
+                                            continue;
+                                        }
+                                        glBufferSubData(GL_ARRAY_BUFFER, sizeof(Vertex)*sequence_ptr->indices[j], sizeof(Vertex), &vertices[sequence_ptr->indices[j]]);
+                                        vertices[sequence_ptr->indices[j]].synced_with_VBO = true;
+                                    }
+                                }
+                                VBO_size = vertices_size;
+                                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                            }
+
+                            // updating EBO
+                            {
+                                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+                                if (sequence_ptr->indices_size >= EBO_capacity) {
+                                    debug(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sequence_ptr->indices_capacity*sizeof(unsigned int), sequence_ptr->indices, GL_DYNAMIC_DRAW));
+                                    EBO_capacity = sequence_ptr->indices_capacity;
+                                }
+                                else {
+                                    debug(glBufferSubData(EBO, 0, sequence_ptr->indices_size, sequence_ptr->indices));
+                                }
+                                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+                                EBO_size = sequence_ptr->indices_size;
+                            }
+
+
+                            // render
+                            if (render_array[i].window_is_target) {
+
+                                int width, height;
+                                glfwGetWindowSize(window, &width, &height);
+
+                                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                                glViewport(0, 0, width, height);
+
+                                glClear(GL_COLOR_BUFFER_BIT);
+
+                                glUseProgram(shader_program);
+
+                                glUniform1ui(target_width_loc, width);
+                                glUniform1ui(target_height_loc, height);
+
+                                glBindVertexArray(VAO);
+                                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+                                glDrawElements(GL_POINTS, EBO_size, GL_UNSIGNED_INT, 0);
+
+                                glBindVertexArray(0);
+                            }
+
+                            else {
+                                // ???
+                            }
+                        }
+                    }
+                }
+                if (window == NULL) {
+                    printf("window==NULL\n");
+                }
+                // Swap buffers and poll events
+                debug(glfwSwapBuffers(window));
+                glfwPollEvents();
+            }
+
+        }
+        void GUI_Window_Delete() {
+
+        }
