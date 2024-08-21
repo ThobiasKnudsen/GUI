@@ -38,20 +38,20 @@ void main() {
 	vs_out.pos[0] = rotate(vs_out.pos[0], origin, r);
 	vs_out.pos[1] = vec2(2.0*float(in_x+in_w)/float(target_width)-1.0,	2.0*float(in_y)/float(target_height) - 1.0);
 	vs_out.pos[1] = rotate(vs_out.pos[1], origin, r);
-	vs_out.pos[2] = vec2(2.0*float(in_x)/int(target_width)-1.0, 		2.0*float(in_y+in_h)/int(target_height)-1.0);
+	vs_out.pos[2] = vec2(2.0*float(in_x)/float(target_width)-1.0, 		2.0*float(in_y+in_h)/float(target_height)-1.0);
 	vs_out.pos[2] = rotate(vs_out.pos[2], origin, r);
-	vs_out.pos[3] = vec2(2.0*float(in_x+in_w)/int(target_width)-1.0, 	2.0*float(in_y+in_h)/int(target_height)-1.0);
+	vs_out.pos[3] = vec2(2.0*float(in_x+in_w)/float(target_width)-1.0, 	2.0*float(in_y+in_h)/float(target_height)-1.0);
 	vs_out.pos[3] = rotate(vs_out.pos[3], origin, r);
 	
 	vs_out.tex_rect = in_tex_rect;
 	vs_out.color = vec4(
-		float((in_color>>24) & 0x000000FF)/256.0,
-		float((in_color>>16) & 0x000000FF)/256.0,
-		float((in_color>>8) & 0x000000FF)/256.0,
-		float((in_color>>0) & 0x000000FF)/256.0
+		float(uint(in_color>>24) & 0x000000FFu)/256.0,
+		float(uint(in_color>>16) & 0x000000FFu)/256.0,
+		float(uint(in_color>>8) & 0x000000FFu)/256.0,
+		float(uint(in_color>>0) & 0x000000FFu)/256.0
 	);
-	vs_out.tex_index = ((in_multiple_values>>8) & 0x000000FF);
-	float corner_radius_pixels = float((in_multiple_values>>16) & 0x0000FFFF);
+	vs_out.tex_index = (uint(in_multiple_values>>8) & 0x000000FFu);
+	float corner_radius_pixels = float(uint(in_multiple_values>>16) & 0x0000FFFFu);
 	vs_out.corner_radius_width = corner_radius_pixels/float(in_w);
 	vs_out.corner_radius_height = corner_radius_pixels/float(in_h);
 }
