@@ -1030,14 +1030,14 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
             return id;
         }
-        void GUI_AddItemToSequence(ID sequence_id, ID id) {
+        void GUI_Sequence_AddID(ID sequence_id, ID id) {
 
             if (id.type != SHAPE && id.type != SEQUENCE) {
                 printf("user flaw: item to add to sequence is not of type sequence or shape\n");
                 exit(-1);
             }
             if (sequence_id.type != SEQUENCE) {
-                printf("user flaw: given ID for sequence GUI_AddItemToSequence is not of type SEQUENCE\n");
+                printf("user flaw: given ID for sequence GUI_Sequence_AddID is not of type SEQUENCE\n");
                 exit(-1);
             }
             if (sequence_id.id == id.id) {
