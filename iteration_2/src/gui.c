@@ -64,19 +64,19 @@
         unsigned int    indices_size;
         unsigned int    indices_capacity;
 
-    } Sequence;
+    } Group;
     typedef struct {
 
         ID              id;
 
         ID              target_image_id; // type Image
-        ID              sequence_id;
+        ID              group_id;
 
         bool            window_is_target;
 
-        unsigned int*   image_source_array;
-        unsigned int    image_source_array_size;
-        unsigned int    image_source_array_capacity;
+        ID*             image_id_source_array;
+        unsigned int    image_id_source_array_size;
+        unsigned int    image_id_source_array_capacity;
 
         unsigned int*   function_array;
         unsigned int    function_array_size;
@@ -159,11 +159,11 @@
     static unsigned int     shape_array_size = 0;
     static unsigned int     shape_array_capacity = 0;
 
-    static Sequence*        sequence_array = NULL;
-    static unsigned int     sequence_array_size = 0;
-    static unsigned int     sequence_array_capacity = 0;
+    static Group*        group_array = NULL;
+    static unsigned int     group_array_size = 0;
+    static unsigned int     group_array_capacity = 0;
 
-    static Rendering*           rendering_array = NULL;
+    static Rendering*       rendering_array = NULL;
     static unsigned int     rendering_array_size = 0;
     static unsigned int     rendering_array_capacity = 0;
 
@@ -375,14 +375,14 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                     #endif
                     break;
                 case SEQUENCE:
-                    ptr = &sequence_array[id.loc];
+                    ptr = &group_array[id.loc];
                     #ifdef DEBUG
-                    if (sequence_array == NULL) {
-                        printf("design flaw: sequence_array == NULL\n");
+                    if (group_array == NULL) {
+                        printf("design flaw: group_array == NULL\n");
                         exit(-1);
                     }
-                    if (((Sequence*)ptr)->id.id != id.id) {
-                        printf("design flaw: id.loc(%d) ((Sequence*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Sequence*)ptr)->id.id, id.id);
+                    if (((Group*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((Group*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Group*)ptr)->id.id, id.id);
                         exit(-1);
                     }
                     #endif
@@ -467,10 +467,10 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                     shape_array_size++;
                     break;
                 case SEQUENCE:
-                    debug(sequence_array = Array_ManageMemory(sequence_array, &sequence_array_size, &sequence_array_capacity, sizeof(Sequence)));
-                    new_id.loc = sequence_array_size;
-                    sequence_array[new_id.loc].id = new_id;
-                    sequence_array_size++;
+                    debug(group_array = Array_ManageMemory(group_array, &group_array_size, &group_array_capacity, sizeof(Group)));
+                    new_id.loc = group_array_size;
+                    group_array[new_id.loc].id = new_id;
+                    group_array_size++;
                     break;
                 case RENDERING:
                     debug(rendering_array = Array_ManageMemory(rendering_array, &rendering_array_size, &rendering_array_capacity, sizeof(Rendering)));
@@ -624,8 +624,8 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                     break;
                 }
                 case SEQUENCE: {
-                    Sequence* ptr = GetItemPointer(id);
-                    printf("Sequence id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", id.id, id.loc, id.active, ptr->id_array, ptr->id_array_size, ptr->id_array_capacity, ptr->indices, ptr->indices_size, ptr->indices_capacity);
+                    Group* ptr = GetItemPointer(id);
+                    printf("Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", id.id, id.loc, id.active, ptr->id_array, ptr->id_array_size, ptr->id_array_capacity, ptr->indices, ptr->indices_size, ptr->indices_capacity);
                     if (ptr->id_array != NULL && ptr->id_array_size != 0) {
                         for (unsigned int i = 0; i < ptr->id_array_size; i++) {
                             ID sub_id = ptr->id_array[i];
@@ -639,15 +639,15 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                                 }
                                 case SEQUENCE: {
 
-                                    Sequence* sub_ptr = GetItemPointer(sub_id);
-                                    printf("    Sequence id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", sub_id.id, sub_id.loc, sub_id.active, sub_ptr->id_array, sub_ptr->id_array_size, sub_ptr->id_array_capacity, sub_ptr->indices, sub_ptr->indices_size, sub_ptr->indices_capacity);
+                                    Group* sub_ptr = GetItemPointer(sub_id);
+                                    printf("    Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", sub_id.id, sub_id.loc, sub_id.active, sub_ptr->id_array, sub_ptr->id_array_size, sub_ptr->id_array_capacity, sub_ptr->indices, sub_ptr->indices_size, sub_ptr->indices_capacity);
 
                                     break;
                                 }
                                 case RENDERING: {
 
                                     Rendering* sub_ptr = GetItemPointer(sub_id);
-                                    printf("Rendering id(%d) loc(%d) active(%d) image_source_array(%p %d %d) function_array(%p %d %d)\n", id.id, id.loc, id.active, sub_ptr->image_source_array, sub_ptr->image_source_array_size, sub_ptr->image_source_array_capacity, sub_ptr->function_array, sub_ptr->function_array_size, sub_ptr->function_array_capacity);
+                                    printf("Rendering id(%d) loc(%d) active(%d) image_id_source_array(%p %d %d) function_array(%p %d %d)\n", id.id, id.loc, id.active, sub_ptr->image_id_source_array, sub_ptr->image_id_source_array_size, sub_ptr->image_id_source_array_capacity, sub_ptr->function_array, sub_ptr->function_array_size, sub_ptr->function_array_capacity);
 
                                     break;
                                 }
@@ -665,11 +665,11 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                 case RENDERING: {
                     Rendering* ptr = GetItemPointer(id);
 
-                    printf("Rendering id(%d) loc(%d) active(%d) window_is_target(%d) image_source_array(%p %d %d) function_array(%p %d %d)\n", id.id, id.loc, id.active, ptr->window_is_target, ptr->image_source_array, ptr->image_source_array_size, ptr->image_source_array_capacity, ptr->function_array, ptr->function_array_size, ptr->function_array_capacity);
+                    printf("Rendering id(%d) loc(%d) active(%d) window_is_target(%d) image_id_source_array(%p %d %d) function_array(%p %d %d)\n", id.id, id.loc, id.active, ptr->window_is_target, ptr->image_id_source_array, ptr->image_id_source_array_size, ptr->image_id_source_array_capacity, ptr->function_array, ptr->function_array_size, ptr->function_array_capacity);
 
-                    Sequence* sequence = GetItemPointer(ptr->sequence_id);
+                    Group* group = GetItemPointer(ptr->group_id);
 
-                    printf("    Sequence id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", ptr->sequence_id.id, ptr->sequence_id.loc, ptr->sequence_id.active, sequence->id_array, sequence->id_array_size, sequence->id_array_capacity, sequence->indices, sequence->indices, sequence->indices_capacity);
+                    printf("    Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", ptr->group_id.id, ptr->group_id.loc, ptr->group_id.active, group->id_array, group->id_array_size, group->id_array_capacity, group->indices, group->indices, group->indices_capacity);
 
                     {
                         Image* image = GetItemPointer(ptr->target_image_id);
@@ -873,19 +873,19 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
 
     // PUBLIC
-        ID GUI_Sequence_Create() {
+        ID GUI_Group_Create() {
 
-            debug(ID new_sequence_id = ID_Create(SEQUENCE));
-            debug(Sequence* sequence_ptr = GetItemPointer(new_sequence_id));
+            debug(ID new_group_id = ID_Create(SEQUENCE));
+            debug(Group* group_ptr = GetItemPointer(new_group_id));
 
-            sequence_ptr->id_array = NULL;
-            sequence_ptr->id_array_size = 0;
-            sequence_ptr->id_array_capacity = 0;
-            sequence_ptr->indices = NULL;
-            sequence_ptr->indices_size = 0;
-            sequence_ptr->indices_capacity = 0;
+            group_ptr->id_array = NULL;
+            group_ptr->id_array_size = 0;
+            group_ptr->id_array_capacity = 0;
+            group_ptr->indices = NULL;
+            group_ptr->indices_size = 0;
+            group_ptr->indices_capacity = 0;
 
-            return new_sequence_id;
+            return new_group_id;
         }
         ID GUI_Shape_Create(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned char r, unsigned char g, unsigned char b, unsigned char a, float rotation_360, unsigned int corner_radius_pixels, ID image_id) {
 
@@ -913,7 +913,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
             glBindTexture(GL_TEXTURE_2D, dynamic_image->texture);
 
             // Specify the texture format and dimensions
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data_rgba_ptr);
 
             // Set texture parameters
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -926,7 +926,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
             return dynamic_image->id;
 
         }
-        ID GUI_Rendering_Create(ID image_id, ID sequence_id) {
+        ID GUI_Rendering_Create(ID image_id, ID group_id) {
 
             if (image_id.type != DYNAMIC_IMAGE && image_id.type != STATIC_IMAGE) {
                 printf("user flaw: You provided an id for an image that is neither a DYNAMIC_IMAGE or STATIC_IMAGE\n");
@@ -935,10 +935,10 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
             debug(Rendering* rendering_ptr = GetItemPointer(ID_Create(RENDERING)));
 
-            if (sequence_id.id == NO_ID.id) {
-                rendering_ptr->sequence_id = GUI_Sequence_Create();
+            if (group_id.id == NO_ID.id) {
+                rendering_ptr->group_id = GUI_Group_Create();
             } else {
-                rendering_ptr->sequence_id = sequence_id;
+                rendering_ptr->group_id = group_id;
             }
 
             rendering_ptr->window_is_target = false; // this variable is needed for the one case that a rendering is for the window
@@ -963,12 +963,12 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
             window.EBO_capacity = 0;
 
             window.rendering                                = GetItemPointer(ID_Create(RENDERING));
-            window.rendering->sequence_id                   = GUI_Sequence_Create();
+            window.rendering->group_id                   = GUI_Group_Create();
             window.rendering->window_is_target              = true;
             window.rendering->target_image_id               = NO_ID;
-            window.rendering->image_source_array            = NULL;
-            window.rendering->image_source_array_size       = 0;
-            window.rendering->image_source_array_capacity   = 0;
+            window.rendering->image_id_source_array            = NULL;
+            window.rendering->image_id_source_array_size       = 0;
+            window.rendering->image_id_source_array_capacity   = 0;
             window.rendering->function_array                = NULL;
             window.rendering->function_array_size           = 0;
             window.rendering->function_array_capacity       = 0;
@@ -1030,45 +1030,45 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
             return id;
         }
-        void GUI_Sequence_AddID(ID sequence_id, ID id) {
+        void GUI_Group_AddID(ID group_id, ID id) {
 
             if (id.type != SHAPE && id.type != SEQUENCE) {
-                printf("user flaw: item to add to sequence is not of type sequence or shape\n");
+                printf("user flaw: item to add to group is not of type group or shape\n");
                 exit(-1);
             }
-            if (sequence_id.type != SEQUENCE) {
-                printf("user flaw: given ID for sequence GUI_Sequence_AddID is not of type SEQUENCE\n");
+            if (group_id.type != SEQUENCE) {
+                printf("user flaw: given ID for group GUI_Group_AddID is not of type SEQUENCE\n");
                 exit(-1);
             }
-            if (sequence_id.id == id.id) {
+            if (group_id.id == id.id) {
                 printf("user flaw: cant add itself it itself\n");
                 exit(-1);
             }
 
-            Sequence* sequence_ptr = GetItemPointer(sequence_id);
-            debug(sequence_ptr->id_array = Array_ManageMemory(sequence_ptr->id_array, &sequence_ptr->id_array_size, &sequence_ptr->id_array_capacity, sizeof(ID)));
-            sequence_ptr->id_array[sequence_ptr->id_array_size] = id;
-            sequence_ptr->id_array_size++;
+            Group* group_ptr = GetItemPointer(group_id);
+            debug(group_ptr->id_array = Array_ManageMemory(group_ptr->id_array, &group_ptr->id_array_size, &group_ptr->id_array_capacity, sizeof(ID)));
+            group_ptr->id_array[group_ptr->id_array_size] = id;
+            group_ptr->id_array_size++;
 
-            printf("AddItemToSequence:\n");
-            PrintItem(sequence_id);
+            printf("AddItemToGroup:\n");
+            PrintItem(group_id);
             PrintItem(id);
         }
         void GUI_AddItemToWindow(ID id) {
 
             if (id.type != SHAPE && id.type != SEQUENCE && id.type != RENDERING) {
-                printf("user flaw: item to add to sequence is not of type sequence or shape or rendering\n");
+                printf("user flaw: item to add to group is not of type group or shape or rendering\n");
                 exit(-1);
             }
 
-            Sequence* sequence_ptr = GetItemPointer(window.rendering->sequence_id);
+            Group* group_ptr = GetItemPointer(window.rendering->group_id);
 
-            debug(sequence_ptr->id_array = Array_ManageMemory(sequence_ptr->id_array, &sequence_ptr->id_array_size, &sequence_ptr->id_array_capacity, sizeof(ID)));
-            sequence_ptr->id_array[sequence_ptr->id_array_size] = id;
-            sequence_ptr->id_array_size++;
+            debug(group_ptr->id_array = Array_ManageMemory(group_ptr->id_array, &group_ptr->id_array_size, &group_ptr->id_array_capacity, sizeof(ID)));
+            group_ptr->id_array[group_ptr->id_array_size] = id;
+            group_ptr->id_array_size++;
 
             printf("AddItemToWindow:\n");
-            PrintItem(window.rendering->sequence_id);
+            PrintItem(window.rendering->group_id);
             PrintItem(id);
 
         }
@@ -1076,9 +1076,9 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
             GUI_PrintAllInfo();
 
-            unsigned int*   sequence_loc_array = NULL;
-            unsigned int    sequence_loc_array_size = 0;
-            unsigned int    sequence_loc_array_capacity = 0;
+            unsigned int*   group_loc_array = NULL;
+            unsigned int    group_loc_array_size = 0;
+            unsigned int    group_loc_array_capacity = 0;
 
             while (!glfwWindowShouldClose(window.window)) {
 
@@ -1095,80 +1095,80 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                             continue;
                         }
 
-                        // everything needed for drawing onto target including any necessary data update.
+                        // everything needed for drawing onto target including any necessary data update
                         {
-                            // making a list of all used sequences then finding the indices for every sequence
+                            // making a list of all used groups then finding the indices for every group
                             {
                                 #ifdef DEBUG
-                                if (rendering_array[i].sequence_id.type != SEQUENCE) {
-                                    printf("design flaw: there is no sequence inside rendering\n");
+                                if (rendering_array[i].group_id.type != SEQUENCE) {
+                                    printf("design flaw: there is no group inside rendering\n");
                                     exit(-1);
                                 }
                                 #endif
 
-                                sequence_loc_array_size = 1;
-                                debug(sequence_loc_array = Array_ManageMemory(sequence_loc_array, &sequence_loc_array_size, &sequence_loc_array_capacity, sizeof(unsigned int)));
-                                sequence_loc_array[0] = rendering_array[i].sequence_id.loc;
+                                group_loc_array_size = 1;
+                                debug(group_loc_array = Array_ManageMemory(group_loc_array, &group_loc_array_size, &group_loc_array_capacity, sizeof(unsigned int)));
+                                group_loc_array[0] = rendering_array[i].group_id.loc;
 
-                                // finding all sequences used for this rendering
-                                for (unsigned int j = 0; j < sequence_loc_array_size; j++) {
+                                // finding all groups used for this rendering
+                                for (unsigned int j = 0; j < group_loc_array_size; j++) {
 
-                                    Sequence* sequence_ptr = &(sequence_array[sequence_loc_array[j]]);
+                                    Group* group_ptr = &(group_array[group_loc_array[j]]);
 
-                                    for (unsigned int k = 0; k < sequence_ptr->id_array_size; k++) {
+                                    for (unsigned int k = 0; k < group_ptr->id_array_size; k++) {
 
-                                        ID id_in_sequence = sequence_ptr->id_array[k];
+                                        ID id_in_group = group_ptr->id_array[k];
 
-                                        if (id_in_sequence.type == SHAPE) {
+                                        if (id_in_group.type == SHAPE) {
                                             continue;
                                         }
                                         #ifdef DEBUG
-                                        else if (id_in_sequence.type != SEQUENCE) {
-                                            printf("design flaw: id inside sequence should be either SEQUENCE or SHAPE\n");
+                                        else if (id_in_group.type != SEQUENCE) {
+                                            printf("design flaw: id inside group should be either SEQUENCE or SHAPE\n");
                                             exit(-1);
                                         }
                                         #endif
 
                                         // if type==SEQUENCE then append location
-                                        debug(sequence_loc_array = Array_ManageMemory(sequence_loc_array, &sequence_loc_array_size, &sequence_loc_array_capacity, sizeof(unsigned int)));
-                                        sequence_loc_array[sequence_loc_array_size] = id_in_sequence.loc;
-                                        sequence_loc_array_size++;
+                                        debug(group_loc_array = Array_ManageMemory(group_loc_array, &group_loc_array_size, &group_loc_array_capacity, sizeof(unsigned int)));
+                                        group_loc_array[group_loc_array_size] = id_in_group.loc;
+                                        group_loc_array_size++;
                                     }
                                 }
 
-                                // updating indices in all sequences just found. starting from the last found sequence
-                                for (int j = sequence_loc_array_size-1; j>=0; j--) {
-                                    Sequence* sequence_ptr = &(sequence_array[sequence_loc_array[j]]);
-                                    sequence_ptr->indices_size = 0;
-                                    for (unsigned int k = 0; k < sequence_ptr->id_array_size; k++) {
+                                // updating indices in all groups just found. starting from the last found group
+                                for (int j = group_loc_array_size-1; j>=0; j--) {
+                                    Group* group_ptr = &(group_array[group_loc_array[j]]);
+                                    group_ptr->indices_size = 0;
+                                    for (unsigned int k = 0; k < group_ptr->id_array_size; k++) {
 
-                                        ID id_in_sequence = sequence_ptr->id_array[k];
+                                        ID id_in_group = group_ptr->id_array[k];
 
                                         // if SHAPE then only appending the index in that shape
-                                        if (id_in_sequence.type == SHAPE) {
-                                            Shape* shape_ptr = GetItemPointer(id_in_sequence);
-                                            debug(sequence_ptr->indices = Array_ManageMemory(sequence_ptr->indices, &sequence_ptr->indices_size, &sequence_ptr->indices_capacity, sizeof(unsigned int)));
-                                            sequence_ptr->indices[sequence_ptr->indices_size] = shape_ptr->vertex_loc;
-                                            sequence_ptr->indices_size++;
+                                        if (id_in_group.type == SHAPE) {
+                                            Shape* shape_ptr = GetItemPointer(id_in_group);
+                                            debug(group_ptr->indices = Array_ManageMemory(group_ptr->indices, &group_ptr->indices_size, &group_ptr->indices_capacity, sizeof(unsigned int)));
+                                            group_ptr->indices[group_ptr->indices_size] = shape_ptr->vertex_loc;
+                                            group_ptr->indices_size++;
                                         }
 
-                                        // if SEQUENCE then append all indices in that other sequence
-                                        else if (id_in_sequence.type == SEQUENCE) {
-                                            Sequence* other_sequence_ptr = GetItemPointer(id_in_sequence);
-                                            for (unsigned int l = 0; l < other_sequence_ptr->indices_size; l++) {
-                                                debug(sequence_ptr->indices = Array_ManageMemory(sequence_ptr->indices, &sequence_ptr->indices_size, &sequence_ptr->indices_capacity, sizeof(unsigned int))); // resizes only if needed
-                                                sequence_ptr->indices[sequence_ptr->indices_size] = other_sequence_ptr->indices[l];
-                                                sequence_ptr->indices_size++;
+                                        // if SEQUENCE then append all indices in that other group
+                                        else if (id_in_group.type == SEQUENCE) {
+                                            Group* other_group_ptr = GetItemPointer(id_in_group);
+                                            for (unsigned int l = 0; l < other_group_ptr->indices_size; l++) {
+                                                debug(group_ptr->indices = Array_ManageMemory(group_ptr->indices, &group_ptr->indices_size, &group_ptr->indices_capacity, sizeof(unsigned int))); // resizes only if needed
+                                                group_ptr->indices[group_ptr->indices_size] = other_group_ptr->indices[l];
+                                                group_ptr->indices_size++;
                                             }
                                         }
                                     }
                                 }
-                                //free(sequence_loc_array);
+                                //free(group_loc_array);
                             }
 
-                            // now indices in the sequence for this rendering is updated
+                            // now indices in the group for this rendering is updated
 
-                            Sequence* sequence_ptr = GetItemPointer(rendering_array[i].sequence_id);
+                            Group* group_ptr = GetItemPointer(rendering_array[i].group_id);
 
                             // updating VBO
                             {
@@ -1176,17 +1176,17 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                                 if (vertices_capacity > window.VBO_capacity) {
                                     glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex)*vertices_capacity, vertices, GL_DYNAMIC_DRAW);
                                     window.VBO_capacity = vertices_capacity;
-                                    for (unsigned int j = 0; j < sequence_ptr->indices_size; j++) {
-                                        vertices[sequence_ptr->indices[j]].synced_with_VBO = true;
+                                    for (unsigned int j = 0; j < group_ptr->indices_size; j++) {
+                                        vertices[group_ptr->indices[j]].synced_with_VBO = true;
                                     }
                                 }
                                 else {
-                                    for (unsigned int j = 0; j < sequence_ptr->indices_size; j++) {
-                                        if (vertices[sequence_ptr->indices[j]].synced_with_VBO) {
+                                    for (unsigned int j = 0; j < group_ptr->indices_size; j++) {
+                                        if (vertices[group_ptr->indices[j]].synced_with_VBO) {
                                             continue;
                                         }
-                                        glBufferSubData(GL_ARRAY_BUFFER, sizeof(Vertex)*sequence_ptr->indices[j], sizeof(Vertex), &vertices[sequence_ptr->indices[j]]);
-                                        vertices[sequence_ptr->indices[j]].synced_with_VBO = true;
+                                        glBufferSubData(GL_ARRAY_BUFFER, sizeof(Vertex)*group_ptr->indices[j], sizeof(Vertex), &vertices[group_ptr->indices[j]]);
+                                        vertices[group_ptr->indices[j]].synced_with_VBO = true;
                                     }
                                 }
                                 window.VBO_size = vertices_size;
@@ -1196,15 +1196,20 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                             // updating EBO
                             {
                                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, window.EBO);
-                                if (sequence_ptr->indices_size >= window.EBO_capacity) {
-                                    debug(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sequence_ptr->indices_capacity*sizeof(unsigned int), sequence_ptr->indices, GL_DYNAMIC_DRAW));
-                                    window.EBO_capacity = sequence_ptr->indices_capacity;
+                                if (group_ptr->indices_size >= window.EBO_capacity) {
+                                    debug(glBufferData(GL_ELEMENT_ARRAY_BUFFER, group_ptr->indices_capacity*sizeof(unsigned int), group_ptr->indices, GL_DYNAMIC_DRAW));
+                                    window.EBO_capacity = group_ptr->indices_capacity;
                                 }
                                 else {
-                                    debug(glBufferSubData(window.EBO, 0, sequence_ptr->indices_size, sequence_ptr->indices));
+                                    debug(glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, group_ptr->indices_size, group_ptr->indices));
                                 }
                                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-                                window.EBO_size = sequence_ptr->indices_size;
+                                window.EBO_size = group_ptr->indices_size;
+                            }
+
+                            // finding all source textures and writing the right tex index to each vertex for a shape that is using a texture
+                            {
+
                             }
 
                             // rendering
@@ -1213,8 +1218,9 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
                                     int width, height;
                                     glfwGetWindowSize(window.window, &width, &height);
+                                    printf("width %d hwight %d\n",width,height);
 
-                                    glBindRenderingbuffer(GL_RENDERINGBUFFER, 0);
+                                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
                                     glViewport(0, 0, width, height);
 
                                     glClear(GL_COLOR_BUFFER_BIT);
@@ -1237,7 +1243,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                                     int width, height;
                                     glfwGetWindowSize(window.window, &width, &height);
 
-                                    glBindRenderingbuffer(GL_RENDERINGBUFFER, window.FBO);
+                                    glBindFramebuffer(GL_FRAMEBUFFER, window.FBO);
                                     glViewport(0, 0, width, height);
 
                                     glClear(GL_COLOR_BUFFER_BIT);

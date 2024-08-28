@@ -18,11 +18,16 @@ void main() {
 		out_frag_color = color;
 		return;
 	}
-	x=x-corner_radius_width;
-	y=y-corner_radius_height;
-	if ((pow(x/corner_radius_width,2)) + (pow(y/corner_radius_height,2)) < 1.0) {
+	x=x-corner_radius_width*0.98;
+	y=y-corner_radius_height*0.98;
+	float a = (pow(x/corner_radius_width,2)) + (pow(y/corner_radius_height,2));
+	if (a < 1.0) {
+		if (a > 0.9) {
+			out_frag_color = vec4(color.rgb, color.a*(1.0-a)*10.0);
+			return;
+		}
 		out_frag_color = color;
 		return;
 	}
-	out_frag_color = vec4(color.rgb, 0.0);
+	out_frag_color = vec4(0.0,0.0,0.0,0.0);
 }

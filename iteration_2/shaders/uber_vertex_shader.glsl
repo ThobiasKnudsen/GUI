@@ -21,27 +21,26 @@ out VS_OUT {
 	float corner_radius_height;
 } vs_out;
 
-vec2 rotate(vec2 point, vec2 origin, float rotation) {
-	return vec2(	(point.x-origin.x)*cos(rotation) - (point.y-origin.y)*sin(rotation)+origin.x,  
-			(point.x-origin.x)*sin(rotation) + (point.y-origin.y)*cos(rotation)+origin.y);
-}
-
-float norm(float value, float max_value) {
-	return 2.0*float(value)/float(max_value)-1.0;
-}
-
 void main() {
-	float r = in_rotation_360*3.1415926/180.0;
-	vec2 origin = vec2(norm(float(in_x)+float(in_w)/2.0, float(target_width)), norm(float(in_y)+float(in_h)/2.0, float(target_height)));
-	
-	vs_out.pos[0] = vec2(2.0*float(in_x)/float(target_width)-1.0, 		2.0*float(in_y)/float(target_height)-1.0);
-	vs_out.pos[0] = rotate(vs_out.pos[0], origin, r);
-	vs_out.pos[1] = vec2(2.0*float(in_x+in_w)/float(target_width)-1.0,	2.0*float(in_y)/float(target_height) - 1.0);
-	vs_out.pos[1] = rotate(vs_out.pos[1], origin, r);
-	vs_out.pos[2] = vec2(2.0*float(in_x)/float(target_width)-1.0, 		2.0*float(in_y+in_h)/float(target_height)-1.0);
-	vs_out.pos[2] = rotate(vs_out.pos[2], origin, r);
-	vs_out.pos[3] = vec2(2.0*float(in_x+in_w)/float(target_width)-1.0, 	2.0*float(in_y+in_h)/float(target_height)-1.0);
-	vs_out.pos[3] = rotate(vs_out.pos[3], origin, r);
+	float rotation_r = in_rotation_360*3.1415926/180.0;
+	float origin_x_pixels = float(in_x)+float(in_w)/2.0;
+	float origin_y_pixels = float(in_y)+float(in_h)/2.0;
+
+	float new_x_pixels = (float(in_x)-origin_x_pixels)*cos(rotation_r) - (float(in_y)-origin_y_pixels)*sin(rotation_r)+origin_x_pixels;
+	float new_y_pixels = (float(in_x)-origin_x_pixels)*sin(rotation_r) + (float(in_y)-origin_y_pixels)*cos(rotation_r)+origin_y_pixels;
+	vs_out.pos[0] = vec2(2.0*new_x_pixels/float(target_width)-1.0, 		2.0*new_y_pixels/float(target_height)-1.0);
+
+	new_x_pixels = (float(in_x+in_w)-origin_x_pixels)*cos(rotation_r) - (float(in_y)-origin_y_pixels)*sin(rotation_r)+origin_x_pixels;
+	new_y_pixels = (float(in_x+in_w)-origin_x_pixels)*sin(rotation_r) + (float(in_y)-origin_y_pixels)*cos(rotation_r)+origin_y_pixels;
+	vs_out.pos[1] = vec2(2.0*new_x_pixels/float(target_width)-1.0, 		2.0*new_y_pixels/float(target_height)-1.0);
+
+	new_x_pixels = (float(in_x)-origin_x_pixels)*cos(rotation_r) - (float(in_y+in_h)-origin_y_pixels)*sin(rotation_r)+origin_x_pixels;
+	new_y_pixels = (float(in_x)-origin_x_pixels)*sin(rotation_r) + (float(in_y+in_h)-origin_y_pixels)*cos(rotation_r)+origin_y_pixels;
+	vs_out.pos[2] = vec2(2.0*new_x_pixels/float(target_width)-1.0, 		2.0*new_y_pixels/float(target_height)-1.0);
+
+	new_x_pixels = (float(in_x+in_w)-origin_x_pixels)*cos(rotation_r) - (float(in_y+in_h)-origin_y_pixels)*sin(rotation_r)+origin_x_pixels;
+	new_y_pixels = (float(in_x+in_w)-origin_x_pixels)*sin(rotation_r) + (float(in_y+in_h)-origin_y_pixels)*cos(rotation_r)+origin_y_pixels;
+	vs_out.pos[3] = vec2(2.0*new_x_pixels/float(target_width)-1.0, 		2.0*new_y_pixels/float(target_height)-1.0);
 	
 	vs_out.tex_rect = in_tex_rect;
 	vs_out.color = vec4(
