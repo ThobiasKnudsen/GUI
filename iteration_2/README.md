@@ -1,4 +1,4 @@
-![Alt text](./iteration_2/image.png)
+![Alt text](./image.png)
 
 GUI - graphical user interface
 
