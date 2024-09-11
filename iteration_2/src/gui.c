@@ -19,7 +19,7 @@
 // TYPES
 #define VERTEX 0
 #define SHAPE 1
-#define SEQUENCE 2
+#define GROUP 2
 #define RENDERING 3
 #define ATLAS_IMAGE 4
 #define DYNAMIC_IMAGE 5
@@ -56,7 +56,7 @@
 
         ID              id;
 
-        ID*             id_array; // types are only SEQUENCE and SHAPE
+        ID*             id_array; // types are only GROUP and SHAPE
         unsigned int    id_array_size;
         unsigned int    id_array_capacity;
 
@@ -374,7 +374,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                     }
                     #endif
                     break;
-                case SEQUENCE:
+                case GROUP:
                     ptr = &group_array[id.loc];
                     #ifdef DEBUG
                     if (group_array == NULL) {
@@ -466,7 +466,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                     shape_array[new_id.loc].id = new_id;
                     shape_array_size++;
                     break;
-                case SEQUENCE:
+                case GROUP:
                     debug(group_array = Array_ManageMemory(group_array, &group_array_size, &group_array_capacity, sizeof(Group)));
                     new_id.loc = group_array_size;
                     group_array[new_id.loc].id = new_id;
@@ -623,7 +623,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
                     break;
                 }
-                case SEQUENCE: {
+                case GROUP: {
                     Group* ptr = GetItemPointer(id);
                     printf("Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", id.id, id.loc, id.active, ptr->id_array, ptr->id_array_size, ptr->id_array_capacity, ptr->indices, ptr->indices_size, ptr->indices_capacity);
                     if (ptr->id_array != NULL && ptr->id_array_size != 0) {
@@ -637,7 +637,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
 
                                     break;
                                 }
-                                case SEQUENCE: {
+                                case GROUP: {
 
                                     Group* sub_ptr = GetItemPointer(sub_id);
                                     printf("    Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", sub_id.id, sub_id.loc, sub_id.active, sub_ptr->id_array, sub_ptr->id_array_size, sub_ptr->id_array_capacity, sub_ptr->indices, sub_ptr->indices_size, sub_ptr->indices_capacity);
@@ -875,7 +875,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
     // PUBLIC
         ID GUI_Group_Create() {
 
-            debug(ID new_group_id = ID_Create(SEQUENCE));
+            debug(ID new_group_id = ID_Create(GROUP));
             debug(Group* group_ptr = GetItemPointer(new_group_id));
 
             group_ptr->id_array = NULL;
@@ -1032,12 +1032,12 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
         }
         void GUI_Group_AddID(ID group_id, ID id) {
 
-            if (id.type != SHAPE && id.type != SEQUENCE) {
+            if (id.type != SHAPE && id.type != GROUP) {
                 printf("user flaw: item to add to group is not of type group or shape\n");
                 exit(-1);
             }
-            if (group_id.type != SEQUENCE) {
-                printf("user flaw: given ID for group GUI_Group_AddID is not of type SEQUENCE\n");
+            if (group_id.type != GROUP) {
+                printf("user flaw: given ID for group GUI_Group_AddID is not of type GROUP\n");
                 exit(-1);
             }
             if (group_id.id == id.id) {
@@ -1056,7 +1056,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
         }
         void GUI_AddItemToWindow(ID id) {
 
-            if (id.type != SHAPE && id.type != SEQUENCE && id.type != RENDERING) {
+            if (id.type != SHAPE && id.type != GROUP && id.type != RENDERING) {
                 printf("user flaw: item to add to group is not of type group or shape or rendering\n");
                 exit(-1);
             }
@@ -1100,7 +1100,7 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                             // making a list of all used groups then finding the indices for every group
                             {
                                 #ifdef DEBUG
-                                if (rendering_array[i].group_id.type != SEQUENCE) {
+                                if (rendering_array[i].group_id.type != GROUP) {
                                     printf("design flaw: there is no group inside rendering\n");
                                     exit(-1);
                                 }
@@ -1123,13 +1123,13 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                                             continue;
                                         }
                                         #ifdef DEBUG
-                                        else if (id_in_group.type != SEQUENCE) {
-                                            printf("design flaw: id inside group should be either SEQUENCE or SHAPE\n");
+                                        else if (id_in_group.type != GROUP) {
+                                            printf("design flaw: id inside group should be either GROUP or SHAPE\n");
                                             exit(-1);
                                         }
                                         #endif
 
-                                        // if type==SEQUENCE then append location
+                                        // if type==GROUP then append location
                                         debug(group_loc_array = Array_ManageMemory(group_loc_array, &group_loc_array_size, &group_loc_array_capacity, sizeof(unsigned int)));
                                         group_loc_array[group_loc_array_size] = id_in_group.loc;
                                         group_loc_array_size++;
@@ -1152,8 +1152,8 @@ void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                                             group_ptr->indices_size++;
                                         }
 
-                                        // if SEQUENCE then append all indices in that other group
-                                        else if (id_in_group.type == SEQUENCE) {
+                                        // if GROUP then append all indices in that other group
+                                        else if (id_in_group.type == GROUP) {
                                             Group* other_group_ptr = GetItemPointer(id_in_group);
                                             for (unsigned int l = 0; l < other_group_ptr->indices_size; l++) {
                                                 debug(group_ptr->indices = Array_ManageMemory(group_ptr->indices, &group_ptr->indices_size, &group_ptr->indices_capacity, sizeof(unsigned int))); // resizes only if needed

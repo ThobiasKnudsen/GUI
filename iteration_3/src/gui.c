@@ -1,0 +1,1267 @@
+#include "gui.h"
+
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <math.h> // pow(a,b)
+
+#define DEBUG
+#include "debug.h"
+#include "array.h"
+
+// Λόγος
+// GOAL
+// MAKE A SIMPLE VERSION THAT USES VBO, VAO, EBO, FBO, INDICES IN EACH SEQENCE, VERTICES IN EACH SHAPE AND WITHOUT IMAGES TO MAKE THINGS SIMPLER
+
+
+// TYPES
+#define VERTEX 0
+#define SHAPE 1
+#define GROUP 2
+#define RENDERING 3
+#define ATLAS_IMAGE 4
+#define DYNAMIC_IMAGE 5
+#define STATIC_IMAGE 6
+#define IMAGE 7
+#define FUNCTION 8
+#define WINDOW 9
+#define NONE 10
+
+
+
+// STRUCTURES
+    typedef struct {
+
+        int             rect[4];
+        float           tex_rect[4];
+        unsigned int    color;
+        float           rotation_360;
+        unsigned int    multiple_values; // 2 bytes corner_radius and 1 byte texture_loc
+        bool            in_use;
+        bool            synced_with_VBO;
+
+        // 46 bytes
+
+    } Vertex;
+    typedef struct {
+
+        ID              id;
+        unsigned int    vertex_loc;
+        unsigned int    image_loc; // its in the global image_array. if image_loc == 0 then it uses no image
+
+    } Shape; // 16 bytes
+    typedef struct {
+
+        ID              id;
+
+        ID*             id_array; // types are only GROUP and SHAPE
+        unsigned int    id_array_size;
+        unsigned int    id_array_capacity;
+
+        ID*             all_id_array; // id in all groups inside this group
+        unsigned int    all_id_array_size;
+        unsigned int    all_id_array_capacity;
+
+    } Group;
+    typedef struct {
+
+        ID              id;
+
+        ID              target_image_id; // accepts only type Image
+        ID              group_id;
+
+        bool            window_is_target;
+
+        ID*             image_id_source_array;
+        unsigned int    image_id_source_array_size;
+        unsigned int    image_id_source_array_capacity;
+
+    } Rendering;
+    typedef struct {
+
+        ID              id;
+
+        GLuint          texture;
+        unsigned int    width;
+        unsigned int    height;
+        unsigned int    index_in_shader;
+
+        unsigned int    padding_pixels;
+
+        unsigned int*   rect_each_image; // 4x unsigned int
+        unsigned int    rect_each_image_size;
+        unsigned int    rect_each_image_capacity;
+
+        unsigned int    image_count;
+
+
+    } AtlasImage;
+    typedef struct {
+
+        ID              id;
+
+        GLuint          texture;
+        unsigned int    width;
+        unsigned int    height;
+        unsigned int    index_in_shader;
+
+    } DynamicImage;
+    typedef struct {
+        ID                  id;
+        unsigned int        atlas_image_loc;
+        unsigned int        image_loc;
+    } StaticImage;
+    typedef struct {
+        ID  id;
+        ID  image_id; // dynamic or static
+    } Image;
+    typedef struct {
+        ID          id;
+    } Function;
+    typedef struct {
+        GLFWwindow*     window;
+
+        Rendering*          rendering;
+
+        GLuint          shader_program;
+        GLuint          target_x_loc;
+        GLuint          target_y_loc;
+        GLuint          target_width_loc;
+        GLuint          target_height_loc;
+
+        GLuint          VAO;
+        GLuint          VBO;
+        unsigned int    VBO_size;
+        unsigned int    VBO_capacity;
+        GLuint          EBO;
+        unsigned int    EBO_size;
+        unsigned int    EBO_capacity;
+        GLuint          FBO;
+    } Window;
+
+// DATA
+    static ID*              id_array = NULL;
+    static unsigned int     id_array_size = 0;
+    static unsigned int     id_array_capacity = 0;
+    static unsigned int     id_count = 0;
+    const ID                NO_ID = {NONE, 0, 0, false};
+
+    static Vertex*          vertices = NULL;
+    static unsigned int     vertices_size = 0;
+    static unsigned int     vertices_capacity = 0;
+
+    static Shape*           shape_array = NULL;
+    static unsigned int     shape_array_size = 0;
+    static unsigned int     shape_array_capacity = 0;
+
+    static Group*           group_array = NULL;
+    static unsigned int     group_array_size = 0;
+    static unsigned int     group_array_capacity = 0;
+
+    static Rendering*       rendering_array = NULL;
+    static unsigned int     rendering_array_size = 0;
+    static unsigned int     rendering_array_capacity = 0;
+
+    static AtlasImage*      atlas_image_array = NULL;
+    static unsigned int     atlas_image_array_size = 0;
+    static unsigned int     atlas_image_array_capacity = 0;
+
+    static DynamicImage*    dynamic_image_array = NULL;
+    static unsigned int     dynamic_image_array_size = 0;
+    static unsigned int     dynamic_image_array_capacity = 0;
+
+    static StaticImage*     static_image_array = NULL;
+    static unsigned int     static_image_array_size = 0;
+    static unsigned int     static_image_array_capacity = 0;
+
+    static Image*           image_array = NULL;
+    static unsigned int     image_array_size = 0;
+    static unsigned int     image_array_capacity = 0;
+
+    static Function*        function_array = NULL;
+    static unsigned int     function_array_size = 0;
+    static unsigned int     function_array_capacity = 0;
+
+    static Window           window;
+    static bool             window_created = false;
+
+
+
+// FUNCTIONS
+    // OPENGL ERROR HANDLING
+        void OpenGLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam) {
+            // Print message source
+            const char* sourceStr;
+            switch (source) {
+                case GL_DEBUG_SOURCE_API:             sourceStr = "API"; break;
+                case GL_DEBUG_SOURCE_WINDOW_SYSTEM:   sourceStr = "Window System"; break;
+                case GL_DEBUG_SOURCE_SHADER_COMPILER: sourceStr = "Shader Compiler"; break;
+                case GL_DEBUG_SOURCE_THIRD_PARTY:     sourceStr = "Third Party"; break;
+                case GL_DEBUG_SOURCE_APPLICATION:     sourceStr = "Application"; break;
+                case GL_DEBUG_SOURCE_OTHER:           sourceStr = "Other"; break;
+                default:                              sourceStr = "Unknown"; break;
+            }
+
+            // Print message type
+            const char* typeStr;
+            switch (type) {
+                case GL_DEBUG_TYPE_ERROR:               typeStr = "Error"; break;
+                case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: typeStr = "Deprecated Behavior"; break;
+                case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:  typeStr = "Undefined Behavior"; break;
+                case GL_DEBUG_TYPE_PORTABILITY:         typeStr = "Portability"; break;
+                case GL_DEBUG_TYPE_PERFORMANCE:         typeStr = "Performance"; break;
+                case GL_DEBUG_TYPE_MARKER:              typeStr = "Marker"; break;
+                case GL_DEBUG_TYPE_PUSH_GROUP:          typeStr = "Push Group"; break;
+                case GL_DEBUG_TYPE_POP_GROUP:           typeStr = "Pop Group"; break;
+                case GL_DEBUG_TYPE_OTHER:               typeStr = "Other"; break;
+                default:                                typeStr = "Unknown"; break;
+            }
+
+            // Print message severity
+            const char* severityStr;
+            switch (severity) {
+                case GL_DEBUG_SEVERITY_HIGH:         severityStr = "High"; break;
+                case GL_DEBUG_SEVERITY_MEDIUM:       severityStr = "Medium"; break;
+                case GL_DEBUG_SEVERITY_LOW:          severityStr = "Low"; break;
+                case GL_DEBUG_SEVERITY_NOTIFICATION: severityStr = "Notification"; break;
+                default:                             severityStr = "Unknown"; break;
+            }
+
+            // Print the complete debug message
+            printf("OpenGL Debug Message\n");
+            printf("Source: %s\n", sourceStr);
+            printf("Type: %s\n", typeStr);
+            printf("ID: %u\n", id);
+            printf("Severity: %s\n", severityStr);
+            printf("Message: %s\n", message);
+            printf("\n");
+
+            exit(-1);
+        }
+
+    // GLFW SIMPLIFIED
+        GLFWwindow* CreateWindow(unsigned int width, unsigned int height, const char* title) {
+            
+            // Initialize GLFW
+            if (!glfwInit()) {
+                printf("Failed to initialize GLFW\n");
+                exit(-1);
+            }
+
+            // Set GLFW window hints
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+            glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // Ensure forward compatibility
+            glfwWindowHint(GLFW_SAMPLES, 4);
+            glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+            glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+
+            // Create a GLFW window
+            GLFWwindow* window = glfwCreateWindow(width, height, title, NULL, NULL);
+            if (!window) {
+                printf("Failed to create GLFW window\n");
+                glfwTerminate();
+                exit(-1);
+            }
+
+            // Make the OpenGL context current
+            glfwMakeContextCurrent(window);
+
+            // Initialize GLEW
+            glewExperimental = GL_TRUE; // Ensure GLEW uses modern techniques for managing OpenGL functionality
+            if (glewInit() != GLEW_OK) {
+                printf("Failed to initialize GLEW\n");
+                exit(-1);
+            }
+
+            // Check the OpenGL version
+            const GLubyte* version = glGetString(GL_VERSION);
+            printf("OpenGL version supported by this context: %s\n", version);
+
+            // Verify that the version is exactly 3.3
+            if (strncmp((const char*)version, "3.3", 3) != 0) {
+                printf("Error: OpenGL version is not 3.3\n");
+                exit(-1);
+            }
+
+            // Enable OpenGL debug output
+            glEnable(GL_DEBUG_OUTPUT);
+            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+            glDebugMessageCallback(OpenGLDebugCallback, NULL);
+
+            // Enable blending
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            return window;
+        }
+        GLuint CompileShader(const char* shader_source, GLenum shader_type) {
+            // Compile the shader
+            debug(GLuint shader = glCreateShader(shader_type));
+            debug(glShaderSource(shader, 1, &shader_source, NULL));
+            debug(glCompileShader(shader));
+            // Check for shader compile errors
+            int success;
+            char infoLog[512];
+            debug(glGetShaderiv(shader, GL_COMPILE_STATUS, &success));
+            if (!success) {
+                glGetShaderInfoLog(shader, 512, NULL, infoLog);
+                printf("ERROR: shader %d compilation failed: %s\n", shader_type, infoLog);
+            }
+            return shader;
+        }
+        GLuint CreateProgram(GLuint* shaders, size_t number_of_shaders) {
+            // Link shaders to create a shader program
+            GLuint shader_program = glCreateProgram();
+            for (size_t i = 0; i < number_of_shaders; i++) {
+                glAttachShader(shader_program, shaders[i]);
+            }
+            glLinkProgram(shader_program);
+            // Check for linking errors
+            int success;
+            char infoLog[512];
+            glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
+            if (!success) {
+                glGetProgramInfoLog(shader_program, 512, NULL, infoLog);
+                printf("ERROR: shader program linking failed: %s\n", infoLog);
+            }
+            return shader_program;
+        }
+        int NDCtoPixel(float NDC, unsigned int max_pixels) {
+            return (int)((float)max_pixels*((NDC+1.f)/2.f));
+        }
+        float PixeltoNDC(float pixel, unsigned int max_pixels) {
+            return (2.f*(float)pixel/(float)max_pixels)-1.f;
+        }
+        char* ReadShaderSource(const char* shader_file) {
+            debug(FILE* file = fopen(shader_file, "rb"););
+            if (!file) {
+                printf("ERROR: could not open shader file %s\n", shader_file);
+                exit(-1);
+            }
+
+            fseek(file,0,SEEK_END);
+            long length = ftell(file);
+            fseek(file,0,SEEK_SET);
+
+            debug(char* buffer = alloc(NULL, length+1));
+            if(!buffer){
+                printf("ERROR: could not allocatre memory for reading file %s\n", shader_file);
+                fclose(file);
+                exit(-1);
+            }
+
+            debug(fread(buffer,1,length,file););
+            debug(buffer[length]='\0';);
+            debug(fclose(file););
+
+            if (!buffer) {
+                printf("ERROR: buffer is NULL\n");
+                exit(-1);
+            }
+
+            return buffer;
+        }
+
+    // PRIVATE
+        void* GetItemPointer(ID id) {
+
+            void* ptr = NULL;
+
+            switch(id.type) {
+                case VERTEX:
+                    ptr = &vertices[id.loc];
+                    break;
+                case SHAPE:
+                    ptr = &shape_array[id.loc];
+                    #ifdef DEBUG
+                    if (((Shape*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((Shape*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Shape*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                case GROUP:
+                    ptr = &group_array[id.loc];
+                    #ifdef DEBUG
+                    if (group_array == NULL) {
+                        printf("design flaw: group_array == NULL\n");
+                        exit(-1);
+                    }
+                    if (((Group*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((Group*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Group*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                case RENDERING:
+                    ptr = &rendering_array[id.loc];
+                    #ifdef DEBUG
+                    if (rendering_array == NULL) {
+                        printf("design flaw: rendering_array == NULL\n");
+                        exit(-1);
+                    }
+                    if (((Rendering*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((Rendering*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Rendering*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                case ATLAS_IMAGE:
+                    ptr = &atlas_image_array[id.loc];
+                    #ifdef DEBUG
+                    if (((AtlasImage*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((AtlasImage*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((AtlasImage*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                case DYNAMIC_IMAGE:
+                    ptr = &dynamic_image_array[id.loc];
+                    #ifdef DEBUG
+                    if (((DynamicImage*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((DynamicImage*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((DynamicImage*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                case STATIC_IMAGE:
+                    ptr = &static_image_array[id.loc];
+                    #ifdef DEBUG
+                    if (((StaticImage*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((StaticImage*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((StaticImage*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                case IMAGE:
+                    ptr = &image_array[id.loc];
+                    break;
+                case FUNCTION:
+                    ptr = &function_array[id.loc];
+                    #ifdef DEBUG
+                    if (((Function*)ptr)->id.id != id.id) {
+                        printf("design flaw: id.loc(%d) ((Function*)ptr)->id.id(%d) id.id(%d)\n", id.loc, ((Function*)ptr)->id.id, id.id);
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+            }
+
+            if (ptr == NULL) {
+                printf("design flaw: ptr == NULL\n");
+                exit(-1);
+            }
+
+            return ptr;
+        }
+        ID ID_Create(unsigned char type) {
+            ID new_id;
+            new_id.id = id_count;
+            id_count++;
+            new_id.type = type;
+            new_id.active = true;
+            switch (type) {
+                case VERTEX:
+                    debug(Array_ManageMemory((void**)&vertices, &vertices_size, &vertices_capacity, sizeof(Vertex)));
+                    new_id.loc = vertices_size;
+                    vertices_size++;
+                    break;
+                case SHAPE:
+                    debug(Array_ManageMemory((void**)&shape_array, &shape_array_size, &shape_array_capacity, sizeof(Shape)));
+                    new_id.loc = shape_array_size;
+                    shape_array[new_id.loc].id = new_id;
+                    shape_array_size++;
+                    break;
+                case GROUP:
+                    debug(Array_ManageMemory((void**)&group_array, &group_array_size, &group_array_capacity, sizeof(Group)));
+                    new_id.loc = group_array_size;
+                    group_array[new_id.loc].id = new_id;
+                    group_array_size++;
+                    break;
+                case RENDERING:
+                    debug(Array_ManageMemory((void**)&rendering_array, &rendering_array_size, &rendering_array_capacity, sizeof(Rendering)));
+                    new_id.loc = rendering_array_size;
+                    rendering_array[new_id.loc].id = new_id;
+                    rendering_array_size++;
+                    break;
+                case ATLAS_IMAGE:
+                    debug(Array_ManageMemory((void**)&atlas_image_array, &atlas_image_array_size, &atlas_image_array_capacity, sizeof(AtlasImage)));
+                    new_id.loc = atlas_image_array_size;
+                    atlas_image_array[new_id.loc].id = new_id;
+                    atlas_image_array_size++;
+                    break;
+                case DYNAMIC_IMAGE:
+                    debug(Array_ManageMemory((void**)&dynamic_image_array, &dynamic_image_array_size, &dynamic_image_array_capacity, sizeof(DynamicImage)));
+                    new_id.loc = dynamic_image_array_size;
+                    dynamic_image_array[new_id.loc].id = new_id;
+                    dynamic_image_array_size++;
+                    break;
+                case STATIC_IMAGE:
+                    debug(Array_ManageMemory((void**)&static_image_array, &static_image_array_size, &static_image_array_capacity, sizeof(StaticImage)));
+                    new_id.loc = static_image_array_size;
+                    static_image_array[new_id.loc].id = new_id;
+                    static_image_array_size++;
+                    break;
+                case IMAGE:
+                    debug(Array_ManageMemory((void**)&image_array, &image_array_size, &image_array_capacity, sizeof(Image)));
+                    new_id.loc = image_array_size;
+                    image_array_size++;
+                    break;
+                case FUNCTION:
+                    debug(Array_ManageMemory((void**)&function_array, &function_array_size, &function_array_capacity, sizeof(Function)));
+                    new_id.loc = function_array_size;
+                    function_array[new_id.loc].id = new_id;
+                    function_array_size++;
+                    break;
+            }
+            #ifdef DEBUG
+            debug(Array_ManageMemory((void**)&id_array, &id_array_size, &id_array_capacity, sizeof(ID)));
+            debug(id_array[id_array_size] = new_id);
+            id_array_size++;
+            #endif
+            return new_id;
+        }
+        ID Vertex_Create(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned char r, unsigned char g, unsigned char b, unsigned char a, float rotation_360, unsigned int corner_radius_pixels) {
+
+            ID new_vertex_id = ID_Create(VERTEX);
+            Vertex* vertex_ptr = GetItemPointer(new_vertex_id);
+
+            vertex_ptr->rect[0] = x;
+            vertex_ptr->rect[1] = y;
+            vertex_ptr->rect[2] = width;
+            vertex_ptr->rect[3] = height;
+            vertex_ptr->tex_rect[0] = 0.0f;
+            vertex_ptr->tex_rect[1] = 0.0f;
+            vertex_ptr->tex_rect[2] = 1.0f;
+            vertex_ptr->tex_rect[3] = 1.0f;
+            vertex_ptr->color = (unsigned int)pow(2, 24)*((unsigned int)r) +
+                                (unsigned int)pow(2, 16)*((unsigned int)g) +
+                                (unsigned int)pow(2, 8)*((unsigned int)b) +
+                                (unsigned int)pow(2, 0)*((unsigned int)a);
+            vertex_ptr->rotation_360 = rotation_360;
+            vertex_ptr->multiple_values = (vertex_ptr->multiple_values&0x0000FFFF) + (unsigned int)pow(2,16) * corner_radius_pixels;
+            vertex_ptr->in_use = true;
+            vertex_ptr->synced_with_VBO = false;
+
+            return new_vertex_id;
+
+        }
+
+    // PRINTING
+        void GUI_PrintFPS() {
+            static double previous_seconds = 0.0f;
+            static int rendering_count = 0;
+            double current_seconds = glfwGetTime();
+            double elapsed_seconds = current_seconds - previous_seconds;
+
+            if (elapsed_seconds > 1.0) {
+                previous_seconds = current_seconds;
+                double fps = (double)rendering_count / elapsed_seconds;
+                char tmp[128];
+                snprintf(tmp, sizeof(tmp), "FPS: %.2f", fps);
+                printf("%s\n", tmp);
+                rendering_count = 0;
+            }
+            rendering_count++;
+        }
+        void PrintItem(ID id) {
+            switch(id.type) {
+                case VERTEX: {
+                    Vertex* ptr = GetItemPointer(id);
+
+                    printf("Vertex id(%d) loc(%d) active(%d) rect(%d %d %d %d) tex_rect(%.3f %.3f %.3f %.3f) color(%d %d %d %d) rotation_360(%f)\n", id.id, id.loc, id.active, ptr->rect[0], ptr->rect[1], ptr->rect[2], ptr->rect[3],  ptr->tex_rect[0], ptr->tex_rect[1], ptr->tex_rect[2], ptr->tex_rect[3], ((unsigned char*)(&ptr->color))[0], ((unsigned char*)(&ptr->color))[1], ((unsigned char*)(&ptr->color))[2], ((unsigned char*)(&ptr->color))[3], ptr->rotation_360);
+
+                    break;
+                }
+                case SHAPE: {
+
+                    Shape* ptr = GetItemPointer(id);
+                    printf("Shape id(%d) loc(%d) active(%d) vertex_loc(%d) image_loc(%d)\n", id.id, id.loc, id.active, ptr->vertex_loc, ptr->image_loc);
+
+                    Vertex* vertex = &vertices[ptr->vertex_loc];
+                    printf("    Vertex rect(%d %d %d %d) tex_rect(%.3f %.3f %.3f %.3f) color(%d %d %d %d) rotation_360(%f)\n", vertex->rect[0], vertex->rect[1], vertex->rect[2], vertex->rect[3],  vertex->tex_rect[0], vertex->tex_rect[1], vertex->tex_rect[2], vertex->tex_rect[3], ((unsigned char*)(&vertex->color))[0], ((unsigned char*)(&vertex->color))[1], ((unsigned char*)(&vertex->color))[2], ((unsigned char*)(&vertex->color))[3], vertex->rotation_360);
+
+                    {
+                        printf("    Image id(%d) loc(%d) active(%d)\n", id.id, id.loc, id.active);
+                        if (ptr->image_loc == 0) {
+                            break;
+                        }
+                        Image* image = &image_array[ptr->image_loc];
+                        ID sub_id = image->image_id;
+
+                        if (image->image_id.type == NONE) {
+                            break;
+                        }
+
+                        if (sub_id.type == DYNAMIC_IMAGE) {
+                            DynamicImage* sub_ptr = GetItemPointer(sub_id);
+
+                            printf("        DynamicImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d)\n", id.id, id.loc, id.active, sub_ptr->texture, sub_ptr->width, sub_ptr->height);
+                        }
+
+                        else if (sub_id.type == STATIC_IMAGE) {
+                            StaticImage* sub_ptr1 = GetItemPointer(sub_id);
+
+                            printf("        StaticImage id(%d) loc(%d) active(%d) atlas_image_loc(%d) image_loc(%d)\n", id.id, id.loc, id.active, sub_ptr1->atlas_image_loc, sub_ptr1->image_loc);
+
+                            AtlasImage* sub_ptr2 = &atlas_image_array[sub_ptr1->atlas_image_loc];
+
+                            printf("        AtlasImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d) padding_pixels(%d) rect_each_image(%p %d %d) image_count(%d)\n", sub_ptr2->id.id, sub_ptr2->id.loc, sub_ptr2->id.active, sub_ptr2->texture, sub_ptr2->width, sub_ptr2->height, sub_ptr2->padding_pixels, sub_ptr2->rect_each_image, sub_ptr2->rect_each_image_size, sub_ptr2->rect_each_image_capacity, sub_ptr2->image_count);
+
+                            if (sub_ptr2->rect_each_image != NULL && sub_ptr2->rect_each_image_size != 0) {
+                                unsigned int i = sub_ptr1->atlas_image_loc;
+                                printf("        Rect %d (%d %d %d %d)\n", i, sub_ptr2->rect_each_image[4*i + 0], sub_ptr2->rect_each_image[4*i + 1], sub_ptr2->rect_each_image[4*i + 2], sub_ptr2->rect_each_image[4*i + 3]);
+                            }
+                        }
+                        #ifdef DEBUG
+                        else {
+                            printf("design flaw: image_id in type IMAGE is neither DYNAMIC_IMAGE or STATIC_IMAGE\n");
+                            exit(-1);
+                        }
+                        #endif
+                    }
+
+                    break;
+                }
+                case GROUP: {
+                    Group* ptr = GetItemPointer(id);
+                    printf("Group id(%d) loc(%d) active(%d) id_array(%p %d %d) all_id_array(%p %d %d)\n", id.id, id.loc, id.active, ptr->id_array, ptr->id_array_size, ptr->id_array_capacity, ptr->all_id_array, ptr->all_id_array_size, ptr->all_id_array_capacity);
+                    if (ptr->id_array != NULL && ptr->id_array_size != 0) {
+                        for (unsigned int i = 0; i < ptr->id_array_size; i++) {
+                            ID sub_id = ptr->id_array[i];
+                            switch(sub_id.type) {
+                                case SHAPE: {
+
+                                    Shape* sub_ptr = GetItemPointer(sub_id);
+                                    printf("    Shape id(%d) loc(%d) active(%d) vertex_loc(%d) image_loc(%d)\n", sub_id.id, sub_id.loc, sub_id.active, sub_ptr->vertex_loc, sub_ptr->image_loc);
+
+                                    break;
+                                }
+                                case GROUP: {
+
+                                    Group* sub_ptr = GetItemPointer(sub_id);
+                                    printf("    Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", sub_id.id, sub_id.loc, sub_id.active, sub_ptr->id_array, sub_ptr->id_array_size, sub_ptr->id_array_capacity, sub_ptr->all_id_array, sub_ptr->all_id_array_size, sub_ptr->all_id_array_capacity);
+
+                                    break;
+                                }
+                                case RENDERING: {
+
+                                    Rendering* sub_ptr = GetItemPointer(sub_id);
+                                    printf("Rendering id(%d) loc(%d) active(%d) image_id_source_array(%p %d %d)\n", id.id, id.loc, id.active, sub_ptr->image_id_source_array, sub_ptr->image_id_source_array_size, sub_ptr->image_id_source_array_capacity);
+
+                                    break;
+                                }
+                                default: {
+
+                                    printf("    id(%d) loc(%d) type(%d) active(%d). type is undefined!!!\n", sub_id.id, sub_id.loc, sub_id.type, sub_id.active);
+
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                case RENDERING: {
+                    Rendering* ptr = GetItemPointer(id);
+
+                    printf("Rendering id(%d) loc(%d) active(%d) window_is_target(%d) image_id_source_array(%p %d %d)\n", id.id, id.loc, id.active, ptr->window_is_target, ptr->image_id_source_array, ptr->image_id_source_array_size, ptr->image_id_source_array_capacity);
+
+                    Group* group = GetItemPointer(ptr->group_id);
+
+                    printf("    Group id(%d) loc(%d) active(%d) id_array(%p %d %d) vertices(%p %d %d)\n", ptr->group_id.id, ptr->group_id.loc, ptr->group_id.active, group->id_array, group->id_array_size, group->id_array_capacity, group->all_id_array, group->all_id_array_size, group->all_id_array_capacity);
+
+                    {
+                        Image* image = GetItemPointer(ptr->target_image_id);
+                        printf("    Image id(%d) loc(%d) active(%d)\n", id.id, id.loc, id.active);
+                        ID sub_id = image->image_id;
+
+                        if (ptr->target_image_id.type == NONE) {
+                            break;
+                        }
+
+                        if (sub_id.type == DYNAMIC_IMAGE) {
+                            DynamicImage* sub_ptr = GetItemPointer(sub_id);
+
+                            printf("        DynamicImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d)\n", id.id, id.loc, id.active, sub_ptr->texture, sub_ptr->width, sub_ptr->height);
+                        }
+
+                        else if (sub_id.type == STATIC_IMAGE) {
+                            StaticImage* sub_ptr1 = GetItemPointer(sub_id);
+
+                            printf("        StaticImage id(%d) loc(%d) active(%d) atlas_image_loc(%d) image_loc(%d)\n", id.id, id.loc, id.active, sub_ptr1->atlas_image_loc, sub_ptr1->image_loc);
+
+                            AtlasImage* sub_ptr2 = &atlas_image_array[sub_ptr1->atlas_image_loc];
+
+                            printf("        AtlasImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d) padding_pixels(%d) rect_each_image(%p %d %d) image_count(%d)\n", sub_ptr2->id.id, sub_ptr2->id.loc, sub_ptr2->id.active, sub_ptr2->texture, sub_ptr2->width, sub_ptr2->height, sub_ptr2->padding_pixels, sub_ptr2->rect_each_image, sub_ptr2->rect_each_image_size, sub_ptr2->rect_each_image_capacity, sub_ptr2->image_count);
+
+                            if (sub_ptr2->rect_each_image != NULL && sub_ptr2->rect_each_image_size != 0) {
+                                unsigned int i = sub_ptr1->atlas_image_loc;
+                                printf("        Rect %d (%d %d %d %d)\n", i, sub_ptr2->rect_each_image[4*i + 0], sub_ptr2->rect_each_image[4*i + 1], sub_ptr2->rect_each_image[4*i + 2], sub_ptr2->rect_each_image[4*i + 3]);
+                            }
+                        }
+                        #ifdef DEBUG
+                        else {
+                            printf("design flaw: image_id in type IMAGE is neither DYNAMIC_IMAGE or STATIC_IMAGE\n");
+                            exit(-1);
+                        }
+                        #endif
+                    }
+
+                    break;
+                }
+                case ATLAS_IMAGE: {
+
+                    AtlasImage* ptr = GetItemPointer(id);
+
+                    printf("AtlasImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d) padding_pixels(%d) rect_each_image(%p %d %d) image_count(%d)\n", id.id, id.loc, id.active, ptr->texture, ptr->width, ptr->height, ptr->padding_pixels, ptr->rect_each_image, ptr->rect_each_image_size, ptr->rect_each_image_capacity, ptr->image_count);
+
+                    if (ptr->rect_each_image != NULL && ptr->rect_each_image_size != 0) {
+                        for (unsigned int i = 0; i < ptr->rect_each_image_size; i++) {
+                            printf("rect %d (%d %d %d %d)\n", i, ptr->rect_each_image[4*i + 0], ptr->rect_each_image[4*i + 1], ptr->rect_each_image[4*i + 2], ptr->rect_each_image[4*i + 3]);
+                        }
+                    }
+                    break;
+                }
+                case DYNAMIC_IMAGE: {
+
+                    DynamicImage* ptr = GetItemPointer(id);
+                    printf("DynamicImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d)\n", id.id, id.loc, id.active, ptr->texture, ptr->width, ptr->height);
+
+                    break;
+                }
+                case STATIC_IMAGE: {
+                    StaticImage* ptr = GetItemPointer(id);
+
+                    printf("StaticImage id(%d) loc(%d) active(%d) atlas_image_loc(%d) image_loc(%d)\n", id.id, id.loc, id.active, ptr->atlas_image_loc, ptr->image_loc);
+
+                    AtlasImage* sub_ptr = &atlas_image_array[ptr->atlas_image_loc];
+
+                    printf("    AtlasImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d) padding_pixels(%d) rect_each_image(%p %d %d) image_count(%d)\n", id.id, id.loc, id.active, sub_ptr->texture, sub_ptr->width, sub_ptr->height, sub_ptr->padding_pixels, sub_ptr->rect_each_image, sub_ptr->rect_each_image_size, sub_ptr->rect_each_image_capacity, sub_ptr->image_count);
+
+                    if (sub_ptr->rect_each_image != NULL && sub_ptr->rect_each_image_size != 0) {
+                        unsigned int i = ptr->atlas_image_loc;
+                        printf("rect %d (%d %d %d %d)\n", i, sub_ptr->rect_each_image[4*i + 0], sub_ptr->rect_each_image[4*i + 1], sub_ptr->rect_each_image[4*i + 2], sub_ptr->rect_each_image[4*i + 3]);
+                    }
+
+                    break;
+                }
+                case IMAGE: {
+
+                    Image* ptr = GetItemPointer(id);
+                    printf("Image id(%d) loc(%d) active(%d)\n", id.id, id.loc, id.active);
+                    ID sub_id = ptr->image_id;
+
+                    if (ptr->image_id.type == NONE) {
+                        break;
+                    }
+
+                    if (sub_id.type == DYNAMIC_IMAGE) {
+                        DynamicImage* sub_ptr = GetItemPointer(sub_id);
+
+                        printf("    DynamicImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d)\n", id.id, id.loc, id.active, sub_ptr->texture, sub_ptr->width, sub_ptr->height);
+                    }
+
+                    else if (sub_id.type == STATIC_IMAGE) {
+                        StaticImage* sub_ptr1 = GetItemPointer(sub_id);
+
+                        printf("    StaticImage id(%d) loc(%d) active(%d) atlas_image_loc(%d) image_loc(%d)\n", id.id, id.loc, id.active, sub_ptr1->atlas_image_loc, sub_ptr1->image_loc);
+
+                        AtlasImage* sub_ptr2 = &atlas_image_array[sub_ptr1->atlas_image_loc];
+
+                        printf("        AtlasImage id(%d) loc(%d) active(%d) texture(%d) width(%d) height(%d) padding_pixels(%d) rect_each_image(%p %d %d) image_count(%d)\n", sub_ptr2->id.id, sub_ptr2->id.loc, sub_ptr2->id.active, sub_ptr2->texture, sub_ptr2->width, sub_ptr2->height, sub_ptr2->padding_pixels, sub_ptr2->rect_each_image, sub_ptr2->rect_each_image_size, sub_ptr2->rect_each_image_capacity, sub_ptr2->image_count);
+
+                        if (sub_ptr2->rect_each_image != NULL && sub_ptr2->rect_each_image_size != 0) {
+                            unsigned int i = sub_ptr1->atlas_image_loc;
+                            printf("            Rect %d (%d %d %d %d)\n", i, sub_ptr2->rect_each_image[4*i + 0], sub_ptr2->rect_each_image[4*i + 1], sub_ptr2->rect_each_image[4*i + 2], sub_ptr2->rect_each_image[4*i + 3]);
+                        }
+                    }
+                    #ifdef DEBUG
+                    else {
+                        printf("design flaw: image_id in type IMAGE is neither DYNAMIC_IMAGE or STATIC_IMAGE\n");
+                        exit(-1);
+                    }
+                    #endif
+                    break;
+                }
+                case FUNCTION: {
+                    Function* ptr = GetItemPointer(id);
+                    printf("Function id(%d) loc(%d) active(%d)\n", id.id, id.loc, id.active);
+                    break;
+                }
+                case NONE: {
+                    printf("None id(%d) loc(%d) active(%d)\n", id.id, id.loc, id.active);
+                    break;
+                }
+                default: {
+                    printf("id(%d) loc(%d) type(%d) active(%d). type is undefined!!!\n", id.type, id.loc, id.type, id.active);
+                    break;
+                }
+            }
+        }
+        void GUI_PrintAllInfo() {
+
+            printf("printing all info\n");
+            // VERTEX
+            printf("vertices (%d): \n", vertices_size);
+            for (unsigned int i = 0; i < vertices_size; i++) {
+                printf("    rect = (%d,%d,%d,%d) | color = (%d,%d,%d,%d) | in_use = %d\n", vertices[i].rect[0], vertices[i].rect[1], vertices[i].rect[2], vertices[i].rect[3], ((unsigned char*)(&vertices[i].color))[0], ((unsigned char*)(&vertices[i].color))[1], ((unsigned char*)(&vertices[i].color))[2], ((unsigned char*)(&vertices[i].color))[3], vertices[i].in_use);
+            }
+
+            // SHAPE
+            printf("shape_array (%d): \n", shape_array_size);
+            for (unsigned int i = 0; i < shape_array_size; i++) {
+                PrintItem(shape_array[i].id);
+                printf("    vertex_loc = %d | image_loc = %d\n", shape_array[i].vertex_loc, shape_array[i].image_loc);
+            }
+
+            printf("DONE printing all infor ============\n");
+        }
+        void GUI_PrintMaxTextureSize() {
+            GLint maxTextureSize;
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+            printf("Maximum supported texture size: %d\n", maxTextureSize);
+        }
+
+    // PUBLIC
+        ID GUI_Group_Create() {
+
+            debug(ID new_group_id = ID_Create(GROUP));
+            debug(Group* group_ptr = GetItemPointer(new_group_id));
+
+            group_ptr->id_array = NULL;
+            group_ptr->id_array_size = 0;
+            group_ptr->id_array_capacity = 0;
+            group_ptr->all_id_array = NULL;
+            group_ptr->all_id_array_size = 0;
+            group_ptr->all_id_array_capacity = 0;
+
+            return new_group_id;
+        }
+        ID GUI_Shape_Create(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned char r, unsigned char g, unsigned char b, unsigned char a, float rotation_360, unsigned int corner_radius_pixels, ID image_id) {
+
+            ID new_vertex_id = Vertex_Create(x,y,width,height,r,g,b,a,rotation_360,corner_radius_pixels);
+
+            ID new_shape_id = ID_Create(SHAPE);
+            Shape* shape_ptr = GetItemPointer(new_shape_id);
+            shape_ptr->image_loc = image_id.loc;
+            shape_ptr->vertex_loc = new_vertex_id.loc;
+
+            printf("Shape_Create:\n");
+            PrintItem(new_shape_id);
+
+            return new_shape_id;
+        }
+        // when image_data_rgba_ptr is not NULL the size of the array should be the same as width and height that is provided
+        // enable_mipmap is not supported yet !!!
+        ID GUI_DynamicImage_Create(unsigned int width, unsigned int height, void* image_data_rgba_ptr, bool enable_mipmap) {
+
+            DynamicImage* dynamic_image = GetItemPointer(ID_Create(DYNAMIC_IMAGE));
+
+            dynamic_image->width = width;
+            dynamic_image->height = height;
+            glGenTextures(1, &dynamic_image->texture);
+            glBindTexture(GL_TEXTURE_2D, dynamic_image->texture);
+
+            // Specify the texture format and dimensions
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data_rgba_ptr);
+
+            // Set texture parameters
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+            glBindTexture(GL_TEXTURE_2D, 0); // Unbind the texture when done
+
+            return dynamic_image->id;
+
+        }
+        ID GUI_Rendering_Create(ID image_id, ID group_id) {
+
+            if (image_id.type != DYNAMIC_IMAGE && image_id.type != STATIC_IMAGE) {
+                printf("user flaw: You provided an id for an image that is neither a DYNAMIC_IMAGE or STATIC_IMAGE\n");
+                exit(-1);
+            }
+
+            debug(Rendering* rendering_ptr = GetItemPointer(ID_Create(RENDERING)));
+
+            if (group_id.id == NO_ID.id) {
+                rendering_ptr->group_id = GUI_Group_Create();
+            } else {
+                rendering_ptr->group_id = group_id;
+            }
+
+            rendering_ptr->window_is_target = false; // this variable is needed for the one case that a rendering is for the window
+            rendering_ptr->target_image_id = image_id;
+
+            return rendering_ptr->id;
+        }
+        ID GUI_Window_Create(unsigned int width, unsigned int height, const char* title, unsigned int FPS) {
+
+            if (window_created) {
+                printf("user false: you have allready created the window!\n");
+                exit(-1);
+            }
+
+            //glGetIntegerv(GL_MAX_IMAGE_SIZE, &maxTextureSize);
+
+            window.window = CreateWindow(width, height, title);
+
+            window.VBO_size = 0;
+            window.VBO_capacity = 0;
+            window.EBO_size = 0;
+            window.EBO_capacity = 0;
+
+            window.rendering                                = GetItemPointer(ID_Create(RENDERING));
+            window.rendering->group_id                   = GUI_Group_Create();
+            window.rendering->window_is_target              = true;
+            window.rendering->target_image_id               = NO_ID;
+            window.rendering->image_id_source_array            = NULL;
+            window.rendering->image_id_source_array_size       = 0;
+            window.rendering->image_id_source_array_capacity   = 0;
+
+            // shader program
+
+            GLuint shaders[3];
+            debug(shaders[0] = CompileShader(ReadShaderSource("shaders/uber_vertex_shader.glsl"), GL_VERTEX_SHADER));
+            debug(shaders[1] = CompileShader(ReadShaderSource("shaders/uber_geometry_shader.glsl"), GL_GEOMETRY_SHADER));
+            debug(shaders[2] = CompileShader(ReadShaderSource("shaders/uber_fragment_shader.glsl"), GL_FRAGMENT_SHADER));
+            window.shader_program = CreateProgram(shaders, 3);
+            glDeleteShader(shaders[0]);
+            glDeleteShader(shaders[1]);
+            glDeleteShader(shaders[2]);
+
+            // Generate and bind a Vertex Array Object
+            glGenVertexArrays(1, &window.VAO);
+            glGenBuffers(1, &window.VBO);
+            glGenBuffers(1, &window.EBO);
+
+            glBindVertexArray(window.VAO);
+            glBindBuffer(GL_ARRAY_BUFFER, window.VBO);
+
+            // pos attribute
+            glEnableVertexAttribArray(0);
+            glVertexAttribIPointer(0, 1, GL_INT, sizeof(Vertex), (void*)(0*sizeof(int)));
+            glEnableVertexAttribArray(1);
+            glVertexAttribIPointer(1, 1, GL_INT, sizeof(Vertex), (void*)(1*sizeof(int)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribIPointer(2, 1, GL_INT, sizeof(Vertex), (void*)(2*sizeof(int)));
+            glEnableVertexAttribArray(3);
+            glVertexAttribIPointer(3, 1, GL_INT, sizeof(Vertex), (void*)(3*sizeof(int)));
+            // tex_rect attribute
+            glEnableVertexAttribArray(4);
+            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(4*sizeof(float)));
+            // color attribute
+            glEnableVertexAttribArray(5);
+            glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(Vertex), (void*)(8*sizeof(float)));
+            // rotation_360 attribute
+            glEnableVertexAttribArray(6);
+            glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(9*sizeof(float)));
+            // corner_radius and tex_loc attribute
+            glEnableVertexAttribArray(7);
+            glVertexAttribIPointer(7, 1, GL_UNSIGNED_INT,  sizeof(Vertex), (void*)(10*sizeof(float)));
+
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+
+            window.target_width_loc = glGetUniformLocation(window.shader_program, "target_width");
+            window.target_height_loc = glGetUniformLocation(window.shader_program, "target_height");
+
+
+            //PrintAllInfo();
+
+            ID id;
+            id.type = WINDOW;
+
+            window_created = true;
+
+            return id;
+        }
+        void GUI_Group_AddID(ID group_id, ID id) {
+
+            if (id.type != SHAPE && id.type != GROUP) {
+                printf("user flaw: item to add to group is not of type group or shape\n");
+                exit(-1);
+            }
+            if (group_id.type != GROUP) {
+                printf("user flaw: given ID for group GUI_Group_AddID is not of type GROUP\n");
+                exit(-1);
+            }
+            if (group_id.id == id.id) {
+                printf("user flaw: cant add itself it itself\n");
+                exit(-1);
+            }
+
+            Group* group_ptr = GetItemPointer(group_id);
+            debug(Array_ManageMemory((void**)&group_ptr->id_array, &group_ptr->id_array_size, &group_ptr->id_array_capacity, sizeof(ID)));
+            group_ptr->id_array[group_ptr->id_array_size] = id;
+            group_ptr->id_array_size++;
+
+            printf("AddItemToGroup:\n");
+            PrintItem(group_id);
+            PrintItem(id);
+        }
+        void GUI_AddItemToWindow(ID id) {
+
+            if (id.type != SHAPE && id.type != GROUP && id.type != RENDERING) {
+                printf("user flaw: item to add to group is not of type group or shape or rendering\n");
+                exit(-1);
+            }
+
+            Group* group_ptr = GetItemPointer(window.rendering->group_id);
+
+            debug(Array_ManageMemory((void**)&group_ptr->id_array, &group_ptr->id_array_size, &group_ptr->id_array_capacity, sizeof(ID)));
+            group_ptr->id_array[group_ptr->id_array_size] = id;
+            group_ptr->id_array_size++;
+
+            printf("AddItemToWindow:\n");
+            PrintItem(window.rendering->group_id);
+            PrintItem(id);
+
+        }
+        void GUI_Window_Show() {
+
+            GUI_PrintAllInfo();
+
+            unsigned int*   group_loc_array = NULL;
+            unsigned int    group_loc_array_size = 0;
+            unsigned int    group_loc_array_capacity = 0;
+
+            unsigned int* tmp_indices = NULL;
+            unsigned int  tmp_indices_size = 0;
+            unsigned int  tmp_indices_capacity = 0;
+
+            while (!glfwWindowShouldClose(window.window)) {
+
+                if (glfwGetKey(window.window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+                    glfwSetWindowShouldClose(window.window, true);
+                }
+                debug(GUI_PrintFPS());
+
+                {
+                    for (int i = rendering_array_size-1; i >= 0; i--) {
+
+                        Rendering* rendering_ptr = &rendering_array[i];
+
+                        //  skip it not active
+                        if (!rendering_ptr->id.active) {
+                            continue;
+                        }
+
+                        // everything needed for drawing onto target including any necessary data update
+                        {
+                            // making a list of all used groups then finding the indices for every group
+                            {
+                                #ifdef DEBUG
+                                if (rendering_ptr->group_id.type != GROUP) {
+                                    printf("design flaw: there is no group inside rendering\n");
+                                    exit(-1);
+                                }
+                                #endif
+
+                                group_loc_array_size = 1;
+                                debug(Array_ManageMemory((void**)&group_loc_array, &group_loc_array_size, &group_loc_array_capacity, sizeof(unsigned int)));
+                                group_loc_array[0] = rendering_ptr->group_id.loc;
+
+                                // finding all groups used for this rendering
+                                for (unsigned int j = 0; j < group_loc_array_size; j++) {
+
+                                    Group* group_ptr = &(group_array[group_loc_array[j]]);
+
+                                    for (unsigned int k = 0; k < group_ptr->id_array_size; k++) {
+
+                                        ID id_in_group = group_ptr->id_array[k];
+
+                                        if (id_in_group.type == SHAPE) {
+                                            continue;
+                                        }
+                                        #ifdef DEBUG
+                                        else if (id_in_group.type != GROUP) {
+                                            printf("design flaw: id inside group should be either GROUP or SHAPE\n");
+                                            exit(-1);
+                                        }
+                                        #endif
+
+                                        // if type==GROUP then append location
+                                        debug(Array_ManageMemory((void**)&group_loc_array, &group_loc_array_size, &group_loc_array_capacity, sizeof(unsigned int)));
+                                        group_loc_array[group_loc_array_size] = id_in_group.loc;
+                                        group_loc_array_size++;
+                                    }
+                                }
+
+                                // updating indices in all groups just found. starting from the last found group
+                                for (int j = group_loc_array_size-1; j>=0; j--) {
+                                    Group* group_ptr = &(group_array[group_loc_array[j]]);
+                                    group_ptr->all_id_array_size = 0;
+                                    for (unsigned int k = 0; k < group_ptr->id_array_size; k++) {
+
+                                        ID id_in_group = group_ptr->id_array[k];
+
+                                        // if SHAPE then only appending the index in that shape
+                                        if (id_in_group.type == SHAPE || id_in_group.type == FUNCTION || id_in_group.type == RENDERING) {
+
+                                            debug(Array_ManageMemory((void**)&group_ptr->all_id_array, &group_ptr->all_id_array_size, &group_ptr->all_id_array_capacity, sizeof(unsigned int)));
+                                            group_ptr->all_id_array[group_ptr->all_id_array_size] = id_in_group;
+                                            group_ptr->all_id_array_size++;
+
+                                        }
+
+                                        // if GROUP then append all indices in that other group
+                                        else if (id_in_group.type == GROUP) {
+                                            Group* other_group_ptr = GetItemPointer(id_in_group);
+                                            for (unsigned int l = 0; l < other_group_ptr->all_id_array_size; l++) {
+                                                debug(Array_ManageMemory((void**)&group_ptr->all_id_array, &group_ptr->all_id_array_size, &group_ptr->all_id_array_capacity, sizeof(ID))); // resizes only if needed
+                                                group_ptr->all_id_array[group_ptr->all_id_array_size] = other_group_ptr->all_id_array[l];
+                                                group_ptr->all_id_array_size++;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // now indices in the group for this rendering is updated
+
+                            Group* group_ptr = GetItemPointer(rendering_ptr->group_id);
+
+                            // finding all textures for this draw rendering
+                            {
+                                rendering_ptr->image_id_source_array_size = 0;
+                                for (unsigned int j = 0; j < group_ptr->all_id_array_size; j++) {
+                                    ID* id_ptr = &group_ptr->all_id_array[j];
+                                    if (id_ptr->type == DYNAMIC_IMAGE || group_ptr->all_id_array[j].type == STATIC_IMAGE) {
+                                        debug(Array_ManageMemory((void**)&rendering_ptr->image_id_source_array, &rendering_ptr->image_id_source_array_size, &rendering_ptr->image_id_source_array_capacity, sizeof(ID)));
+                                        rendering_ptr->image_id_source_array[rendering_ptr->image_id_source_array_size] = *id_ptr;
+                                        rendering_ptr->image_id_source_array_size++;
+                                    }
+                                }
+                            }
+
+                            // updating tex_index and tex_rect in each vertex
+                            {
+
+                            }
+
+                            // updating VBO
+                            {
+                                glBindBuffer(GL_ARRAY_BUFFER, window.VBO);
+                                if (vertices_capacity > window.VBO_capacity) {
+                                    glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex)*vertices_capacity, vertices, GL_DYNAMIC_DRAW);
+                                    window.VBO_capacity = vertices_capacity;
+                                    for (unsigned int j = 0; j < group_ptr->all_id_array_size; j++) {
+                                        if (group_ptr->all_id_array[j].type == SHAPE) {
+                                            vertices[group_ptr->all_id_array[j].loc].synced_with_VBO = true;
+                                        }
+                                    }
+                                }
+                                else {
+                                    for (unsigned int j = 0; j < group_ptr->all_id_array_size; j++) {
+                                        if (group_ptr->all_id_array[j].type != SHAPE) {
+                                            continue;
+                                        }
+                                        if (vertices[group_ptr->all_id_array[j].loc].synced_with_VBO) {
+                                            continue;
+                                        }
+                                        glBufferSubData(GL_ARRAY_BUFFER, sizeof(Vertex)*group_ptr->all_id_array[j].loc, sizeof(Vertex), &vertices[group_ptr->all_id_array[j].loc]);
+                                        vertices[group_ptr->all_id_array[j].loc].synced_with_VBO = true;
+                                    }
+                                }
+                                window.VBO_size = vertices_size;
+                                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                            }
+
+                            // updating EBO
+                            {
+                                // making array with only indices for vertices
+                                for (unsigned int j = 0; j < group_ptr->all_id_array_size; j++) {
+                                    if (group_ptr->all_id_array[j].type == SHAPE) {
+                                        debug(Array_ManageMemory((void**)&tmp_indices, &tmp_indices_size, &tmp_indices_capacity, sizeof(unsigned int)));
+                                        tmp_indices[tmp_indices_size] = group_ptr->all_id_array[j].loc;
+                                        tmp_indices_size++;
+                                    }
+                                }
+                                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, window.EBO);
+                                if (tmp_indices_size >= window.EBO_capacity) {
+                                    debug(glBufferData(GL_ELEMENT_ARRAY_BUFFER, tmp_indices_capacity*sizeof(unsigned int), tmp_indices, GL_DYNAMIC_DRAW));
+                                    window.EBO_capacity = tmp_indices_capacity;
+                                }
+                                else {
+                                    debug(glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, tmp_indices_size, tmp_indices));
+                                }
+                                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+                                window.EBO_size = tmp_indices_size;
+                            }
+
+                            // finding all source textures and writing the right tex index to each vertex for a shape that is using a texture
+                            {
+
+                            }
+
+                            // rendering
+                            {
+                                if (rendering_ptr->window_is_target) {
+
+                                    int width, height;
+                                    glfwGetWindowSize(window.window, &width, &height);
+
+                                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                                    glViewport(0, 0, width, height);
+
+                                    glClear(GL_COLOR_BUFFER_BIT);
+
+                                    glUseProgram(window.shader_program);
+
+                                    glUniform1ui(window.target_width_loc, width);
+                                    glUniform1ui(window.target_height_loc, height);
+
+                                    glBindVertexArray(window.VAO);
+                                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, window.EBO);
+                                    glDrawElements(GL_POINTS, window.EBO_size, GL_UNSIGNED_INT, 0);
+
+                                    glBindVertexArray(0);
+                                }
+
+                                // if now window it is static or dynamic image
+                                else {
+
+                                    int width, height;
+                                    glfwGetWindowSize(window.window, &width, &height);
+
+                                    glBindFramebuffer(GL_FRAMEBUFFER, window.FBO);
+                                    glViewport(0, 0, width, height);
+
+                                    glClear(GL_COLOR_BUFFER_BIT);
+
+                                    glUseProgram(window.shader_program);
+
+                                    glUniform1ui(window.target_width_loc, width);
+                                    glUniform1ui(window.target_height_loc, height);
+
+                                    glBindVertexArray(window.VAO);
+                                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, window.EBO);
+                                    glDrawElements(GL_POINTS, window.EBO_size, GL_UNSIGNED_INT, 0);
+
+                                    glBindVertexArray(0);
+
+                                }
+                            }
+                        }
+                    }
+                }
+                if (window.window == NULL) {
+                    printf("window==NULL\n");
+                }
+                // Swap buffers and poll events
+                debug(glfwSwapBuffers(window.window));
+                glfwPollEvents();
+            }
+
+        }
+        void GUI_Window_Delete() {
+
+        }

@@ -15,6 +15,8 @@
 
 // 		FIRST PRIORITY: MAKE DYNAMIC_IMAGE STATIC_IMAGE AND RENDERING WORK
 
+// Shape should not contain index in vertices. there should be a new struct, ShapeInstance that contains a ShapeBlueprint and a Vertex. The Shape inside Group is replaced by ShapeInstance. for the user there is no extra code.
+
 ID Group_1() {
 
 	debug(ID group_1 = GUI_Group_Create());

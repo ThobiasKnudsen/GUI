@@ -1,0 +1,16 @@
+/home/kali/dev/GUI/iteration_5/build/CMakeFiles/App.dir
+/home/kali/dev/GUI/iteration_5/build/CMakeFiles/edit_cache.dir
+/home/kali/dev/GUI/iteration_5/build/CMakeFiles/rebuild_cache.dir
+/home/kali/dev/GUI/iteration_5/build/glfw/CMakeFiles/edit_cache.dir
+/home/kali/dev/GUI/iteration_5/build/glfw/CMakeFiles/rebuild_cache.dir
+/home/kali/dev/GUI/iteration_5/build/glfw/src/CMakeFiles/glfw.dir
+/home/kali/dev/GUI/iteration_5/build/glfw/src/CMakeFiles/update_mappings.dir
+/home/kali/dev/GUI/iteration_5/build/glfw/src/CMakeFiles/edit_cache.dir
+/home/kali/dev/GUI/iteration_5/build/glfw/src/CMakeFiles/rebuild_cache.dir
+/home/kali/dev/GUI/iteration_5/build/webgpu/CMakeFiles/edit_cache.dir
+/home/kali/dev/GUI/iteration_5/build/webgpu/CMakeFiles/rebuild_cache.dir
+/home/kali/dev/GUI/iteration_5/build/_deps/webgpu-backend-wgpu-build/CMakeFiles/edit_cache.dir
+/home/kali/dev/GUI/iteration_5/build/_deps/webgpu-backend-wgpu-build/CMakeFiles/rebuild_cache.dir
+/home/kali/dev/GUI/iteration_5/build/glfw3webgpu/CMakeFiles/glfw3webgpu.dir
+/home/kali/dev/GUI/iteration_5/build/glfw3webgpu/CMakeFiles/edit_cache.dir
+/home/kali/dev/GUI/iteration_5/build/glfw3webgpu/CMakeFiles/rebuild_cache.dir

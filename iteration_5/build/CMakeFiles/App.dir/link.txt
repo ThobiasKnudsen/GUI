@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/App.dir/main.cpp.o -o App   -L/home/kali/dev/GUI/iteration_5/build/_deps/webgpu-backend-wgpu-src/bin/linux-x86_64  -Wl,-rpath,/home/kali/dev/GUI/iteration_5/build/_deps/webgpu-backend-wgpu-src/bin/linux-x86_64 glfw/src/libglfw3.a glfw3webgpu/libglfw3webgpu.a glfw/src/libglfw3.a /usr/lib/x86_64-linux-gnu/librt.a -lm -ldl -lwgpu_native
